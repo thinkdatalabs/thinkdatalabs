@@ -1,8 +1,8 @@
-name: 🚀 Think Data Labs - GitHub Profile & Repository Metrics Update
+name: 🚀 Think Data Labs - GitHub Activity & Repository Metrics Update
 
 on:
   schedule:
-    - cron: '0 */6 * * *'    # Update every 6 hours for optimal performance
+    - cron: '0 */6 * * *'    # Update every 6 hours for real-time activity
     - cron: '0 2 * * 1'      # Weekly comprehensive update on Mondays at 2 AM
   workflow_dispatch:         # Allow manual trigger
     inputs:
@@ -13,12 +13,10 @@ on:
         type: choice
         options:
           - 'full'
-          - 'stats-only'
           - 'activity-only'
-          - 'metrics-only'
           - 'repositories-only'
       force_rebuild:
-        description: 'Force rebuild all badges and metrics'
+        description: 'Force rebuild all badges'
         required: false
         default: false
         type: boolean
@@ -32,8 +30,6 @@ on:
 
 env:
   GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-  WAKATIME_API_KEY: ${{ secrets.WAKATIME_API_KEY }}
-  BLOG_FEED_URL: "https://blog.thinkdatalabs.com/feed.xml"
   COMPANY_NAME: "Think Data Labs"
   GITHUB_USERNAME: "thinkdatalabs"
   BOT_NAME: "think-data-labs-bot"
@@ -46,9 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     name: 🔧 Environment Setup & Validation
     outputs:
-      should_update_stats: ${{ steps.scope.outputs.stats }}
       should_update_activity: ${{ steps.scope.outputs.activity }}
-      should_update_metrics: ${{ steps.scope.outputs.metrics }}
       should_update_repositories: ${{ steps.scope.outputs.repositories }}
       timestamp: ${{ steps.time.outputs.timestamp }}
       date_formatted: ${{ steps.time.outputs.date_formatted }}
@@ -78,33 +72,15 @@ jobs:
           
           case $UPDATE_TYPE in
             "full")
-              echo "stats=true" >> $GITHUB_OUTPUT
               echo "activity=true" >> $GITHUB_OUTPUT
-              echo "metrics=true" >> $GITHUB_OUTPUT
               echo "repositories=true" >> $GITHUB_OUTPUT
               ;;
-            "stats-only")
-              echo "stats=true" >> $GITHUB_OUTPUT
-              echo "activity=false" >> $GITHUB_OUTPUT
-              echo "metrics=false" >> $GITHUB_OUTPUT
-              echo "repositories=false" >> $GITHUB_OUTPUT
-              ;;
             "activity-only")
-              echo "stats=false" >> $GITHUB_OUTPUT
               echo "activity=true" >> $GITHUB_OUTPUT
-              echo "metrics=false" >> $GITHUB_OUTPUT
-              echo "repositories=false" >> $GITHUB_OUTPUT
-              ;;
-            "metrics-only")
-              echo "stats=false" >> $GITHUB_OUTPUT
-              echo "activity=false" >> $GITHUB_OUTPUT
-              echo "metrics=true" >> $GITHUB_OUTPUT
               echo "repositories=false" >> $GITHUB_OUTPUT
               ;;
             "repositories-only")
-              echo "stats=false" >> $GITHUB_OUTPUT
               echo "activity=false" >> $GITHUB_OUTPUT
-              echo "metrics=false" >> $GITHUB_OUTPUT
               echo "repositories=true" >> $GITHUB_OUTPUT
               ;;
           esac
@@ -118,12 +94,6 @@ jobs:
             exit 1
           fi
           echo "✅ GitHub Token: Configured"
-          
-          if [ -z "${{ env.WAKATIME_API_KEY }}" ]; then
-            echo "⚠️ WAKATIME_API_KEY not configured (optional)"
-          else
-            echo "✅ WakaTime API Key: Configured"
-          fi
           
           curl -s -H "Authorization: token ${{ env.GITHUB_TOKEN }}" \
                "https://api.github.com/user" > /dev/null
@@ -187,50 +157,12 @@ jobs:
               
               console.log(chalk.green(`📦 Found ${repos.length} repositories`));
               
-              // Updated repository list from README.md
+              // Repository list from README.md
               const featuredRepositories = [
-                // Python & Data Science
                 'python-data-analytics',
                 'ml-model-deployment',
-                'python-api-services',
-                'data-processing-pipelines',
-                'python-algorithms',
-                'scientific-computing',
-                // Machine Learning & AI
-                'ml-algorithms-library',
-                'ai-model-training',
-                'computer-vision-tools',
-                'nlp-text-analysis',
-                'deep-learning-frameworks',
-                'reinforcement-learning',
-                // Web Development
                 'react-component-library',
-                'nextjs-applications',
-                'node-microservices',
-                'typescript-utilities',
-                'express-api-frameworks',
-                'vue-applications',
-                // Data Visualization
-                'interactive-dashboards',
-                'real-time-analytics',
-                'chart-components',
-                'data-export-tools',
-                'd3-visualizations',
-                'plotly-dashboards',
-                // Cloud & Infrastructure
-                'aws-deployment-tools',
-                'docker-containers',
-                'kubernetes-configs',
-                'terraform-modules',
-                'ci-cd-pipelines',
-                'monitoring-solutions',
-                // Mobile & Desktop Applications
-                'react-native-apps',
-                'electron-desktop-apps',
-                'flutter-mobile-apps',
-                'native-mobile-libs',
-                'pwa-applications',
-                'cross-platform-tools'
+                'nextjs-applications'
               ];
               
               let repositoryTableRows = '';
@@ -268,16 +200,6 @@ jobs:
                 console.log(chalk.yellow('⚠️ Repository table section not found'));
               }
               
-              const metrics = calculateMetrics(repos);
-              console.log(chalk.blue('📈 Repository Metrics:'));
-              console.log(`   - Total Repositories: ${metrics.totalRepos}`);
-              console.log(`   - Total Stars: ${metrics.totalStars}`);
-              console.log(`   - Total Forks: ${metrics.totalForks}`);
-              console.log(`   - Primary Languages: ${metrics.topLanguages.join(', ')}`);
-              console.log(`   - Active Repositories: ${metrics.activeRepos}`);
-              
-              updateCompanyMetrics(readme, metrics);
-              
               fs.writeFileSync('README.md', readme);
               console.log(chalk.green('🎉 Repository data updated successfully!'));
               
@@ -292,50 +214,12 @@ jobs:
               'Python': '![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)',
               'JavaScript': '![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?style=flat&logo=javascript&logoColor=black)',
               'TypeScript': '![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=flat&logo=typescript&logoColor=white)',
-              'Java': '![Java](https://img.shields.io/badge/Java-ED8B00?style=flat&logo=java&logoColor=white)',
-              'C++': '![C++](https://img.shields.io/badge/C++-00599C?style=flat&logo=c%2B%2B&logoColor=white)',
-              'Go': '![Go](https://img.shields.io/badge/Go-00ADD8?style=flat&logo=go&logoColor=white)',
-              'Rust': '![Rust](https://img.shields.io/badge/Rust-000000?style=flat&logo=rust&logoColor=white)',
               'React': '![React](https://img.shields.io/badge/React-20232A?style=flat&logo=react&logoColor=61DAFB)',
               'Next.js': '![Next.js](https://img.shields.io/badge/Next.js-000000?style=flat&logo=next.js&logoColor=white)',
-              'Vue.js': '![Vue.js](https://img.shields.io/badge/Vue.js-35495E?style=flat&logo=vue.js&logoColor=4FC08D)',
-              'Angular': '![Angular](https://img.shields.io/badge/Angular-DD0031?style=flat&logo=angular&logoColor=white)',
-              'Svelte': '![Svelte](https://img.shields.io/badge/Svelte-4A4A55?style=flat&logo=svelte&logoColor=FF3E00)',
               'Multiple': '![Multiple](https://img.shields.io/badge/Multiple-Languages-rainbow?style=flat)'
             };
             
             return languageBadges[language] || `![${language}](https://img.shields.io/badge/${encodeURIComponent(language)}-gray?style=flat)`;
-          }
-          
-          function calculateMetrics(repos) {
-            const totalRepos = repos.length;
-            const totalStars = repos.reduce((sum, repo) => sum + repo.stargazers_count, 0);
-            const totalForks = repos.reduce((sum, repo) => sum + repo.forks_count, 0);
-            const activeRepos = repos.filter(repo => !repo.archived).length;
-            
-            const languageCount = {};
-            repos.forEach(repo => {
-              if (repo.language) {
-                languageCount[repo.language] = (languageCount[repo.language] || 0) + 1;
-              }
-            });
-            
-            const topLanguages = Object.entries(languageCount)
-              .sort(([,a], [,b]) => b - a)
-              .slice(0, 5)
-              .map(([lang]) => lang);
-            
-            return {
-              totalRepos,
-              totalStars,
-              totalForks,
-              activeRepos,
-              topLanguages
-            };
-          }
-          
-          function updateCompanyMetrics(readme, metrics) {
-            console.log(chalk.blue('📊 Metrics calculated for company impact section'));
           }
           
           updateRepositoryData();
@@ -352,11 +236,11 @@ jobs:
             echo "📝 No repository changes to commit"
           else
             git add README.md
-            git commit -m "📊 Update repository statistics and metrics
+            git commit -m "📊 Update repository statistics
 
-            - Updated repository status table with new repositories
+            - Updated repository status table
             - Refreshed project metadata
-            - Synchronized badge information for all repositories
+            - Synchronized badge information
             
             🤖 Auto-generated by Think Data Labs Bot"
             echo "✅ Repository updates committed"
@@ -381,160 +265,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
         with:
-          COMMIT_MSG: '🔄 Update recent GitHub activity feed'
+          COMMIT_MSG: '🔄 Update recent GitHub activity feed
+            
+            - Refreshed real-time activity section
+            - Updated contribution timeline
+            - Synchronized activity badges
+            
+            🤖 Auto-generated by Think Data Labs Bot'
           MAX_LINES: 12
           COMMIT_NAME: ${{ env.BOT_NAME }}
           COMMIT_EMAIL: ${{ env.BOT_EMAIL }}
 
-  # Update WakaTime development statistics
-  update-development-stats:
+  # Validate README structure and badges
+  validate-readme:
     runs-on: ubuntu-latest
-    name: ⏱️ Update Development Time Statistics
-    needs: setup-environment
-    if: needs.setup-environment.outputs.should_update_stats == 'true' && vars.WAKATIME_API_KEY != ''
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          token: ${{ env.GITHUB_TOKEN }}
-          fetch-depth: 0
-
-      - name: Update WakaTime coding statistics
-        uses: anmol098/waka-readme-stats@master
-        with:
-          WAKATIME_API_KEY: ${{ env.WAKATIME_API_KEY }}
-          GH_TOKEN: ${{ env.GITHUB_TOKEN }}
-          USERNAME: ${{ env.GITHUB_USERNAME }}
-          SHOW_PROJECTS: "True"
-          SHOW_PROFILE_VIEWS: "True"
-          SHOW_COMMIT: "True"
-          SHOW_DAYS_OF_WEEK: "True"
-          SHOW_LANGUAGE: "True"
-          SHOW_OS: "True"
-          SHOW_TIMEZONE: "True"
-          SHOW_UPDATED_DATE: "True"
-          SHOW_TOTAL_CODE_TIME: "True"
-          SHOW_EDITORS: "True"
-          SHOW_SHORT_INFO: "True"
-          SHOW_LOC_CHART: "False"
-          SHOW_LINES_OF_CODE: "True"
-          LOCALE: "en"
-          COMMIT_MESSAGE: "⏱️ Updated weekly development time breakdown"
-          COMMIT_BY_ME: "True"
-
-  # Update blog posts and technical insights
-  update-blog-content:
-    runs-on: ubuntu-latest
-    name: 📝 Update Blog Posts & Technical Insights
-    needs: setup-environment
-    if: needs.setup-environment.outputs.should_update_activity == 'true'
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          token: ${{ env.GITHUB_TOKEN }}
-          fetch-depth: 0
-
-      - name: Update latest blog posts and insights
-        uses: gautamkrishnar/blog-post-workflow@master
-        with:
-          comment_tag_name: "BLOG-POST-LIST"
-          feed_list: ${{ env.BLOG_FEED_URL }}
-          max_post_count: 5
-          template: "- 📰 **[$title]($url)** *(Published: $date)*"
-          date_format: "mmmm dd, yyyy"  # Updated to match README format
-          commit_message: "📝 Updated latest blog posts and technical insights"
-          gh_token: ${{ env.GITHUB_TOKEN }}
-          committer_username: ${{ env.BOT_NAME }}
-          committer_email: ${{ env.BOT_EMAIL }}
-
-  # Generate comprehensive GitHub metrics and visualizations
-  generate-github-metrics:
-    runs-on: ubuntu-latest
-    name: 📈 Generate Comprehensive GitHub Metrics
-    needs: setup-environment
-    if: needs.setup-environment.outputs.should_update_metrics == 'true'
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          token: ${{ env.GITHUB_TOKEN }}
-
-      - name: Generate GitHub metrics visualization
-        uses: lowlighter/metrics@latest
-        with:
-          filename: github-metrics.svg
-          token: ${{ env.GITHUB_TOKEN }}
-          user: ${{ env.GITHUB_USERNAME }}
-          template: classic
-          base: header, activity, community, repositories, metadata
-          config_timezone: ${{ env.TIMEZONE }}
-          config_display: large
-          config_output: auto
-          
-          plugin_activity: yes
-          plugin_activity_limit: 20
-          plugin_activity_days: 30
-          plugin_activity_filter: all
-          plugin_activity_visibility: all
-          plugin_activity_timestamps: yes
-          
-          plugin_languages: yes
-          plugin_languages_limit: 12
-          plugin_languages_threshold: 1%
-          plugin_languages_colors: github
-          plugin_languages_sections: most-used
-          plugin_languages_indepth: yes
-          plugin_languages_analysis_timeout: 45
-          plugin_languages_categories: markup, programming, data
-          plugin_languages_recent_categories: markup, programming, data
-          plugin_languages_recent_load: 500
-          plugin_languages_recent_days: 30
-          
-          plugin_notable: yes
-          plugin_notable_filter: stars:>5
-          plugin_notable_repositories: yes
-          plugin_notable_indepth: yes
-          
-          plugin_achievements: yes
-          plugin_achievements_threshold: B
-          plugin_achievements_secrets: yes
-          plugin_achievements_display: compact
-          plugin_achievements_limit: 20
-          
-          plugin_followup: yes
-          plugin_followup_sections: repositories
-          plugin_followup_indepth: yes
-          
-          plugin_code: yes
-          plugin_code_lines: 20
-          plugin_code_load: 800
-          plugin_code_visibility: public
-          plugin_code_skipped: thinkdatalabs/thinkdatalabs
-
-      - name: Commit generated metrics
-        run: |
-          git config --global user.name "${{ env.BOT_NAME }}"
-          git config --global user.email "${{ env.BOT_EMAIL }}"
-          
-          if [ -f "github-metrics.svg" ]; then
-            git add github-metrics.svg
-            git commit -m "📈 Update GitHub metrics visualization
-
-            - Generated comprehensive metrics dashboard
-            - Updated activity and contribution data
-            - Refreshed language and project statistics
-            
-            🤖 Auto-generated by Think Data Labs Bot" || echo "No metrics changes to commit"
-          fi
-
-  # Security audit and quality assurance
-  security-quality-audit:
-    runs-on: ubuntu-latest
-    name: 🛡️ Security & Quality Assurance
+    name: 🛡️ Validate README & Badges
     needs: setup-environment
     
     steps:
@@ -544,32 +289,13 @@ jobs:
           token: ${{ env.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Scan for exposed secrets
-        uses: trufflesecurity/trufflehog@main
-        with:
-          path: ./
-          base: main
-          head: HEAD
-          extra_args: --debug --only-verified --fail
-
-      - name: Validate README.md structure and content
+      - name: Validate README.md structure
         run: |
           echo "🔍 Validating Think Data Labs README.md structure..."
           
           REQUIRED_SECTIONS=(
-            "About Us"
             "GitHub Activity"
-            "Repository Structure"
-            "Quick Start"
-            "Our Core Services"
-            "Featured Projects"
-            "Company Impact"
-            "Why Choose Think Data Labs"
-            "Get In Touch"
-            "Technologies We Master"
-            "Open Source Contributions"
-            "Success Stories"
-            "Certifications & Partnerships"
+            "Repository Status Dashboard"
           )
           
           MISSING_SECTIONS=()
@@ -587,16 +313,16 @@ jobs:
             echo ""
             echo "📋 Missing sections summary:"
             printf ' - %s\n' "${MISSING_SECTIONS[@]}"
-            exit 1  # Fail the job if sections are missing
+            exit 1
           else
             echo "🎉 All required sections are present!"
           fi
 
-      - name: Validate badges and external links
+      - name: Validate badges
         run: |
-          echo "🏷️ Validating GitHub badges and external links..."
+          echo "🏷️ Validating GitHub badges..."
           
-          BADBTGE_URLS=(
+          BADGE_URLS=(
             "https://github-readme-stats.vercel.app/api?username=thinkdatalabs"
             "https://github-readme-streak-stats.herokuapp.com/?user=thinkdatalabs"
             "https://github-readme-stats.vercel.app/api/top-langs/?username=thinkdatalabs"
@@ -616,30 +342,15 @@ jobs:
               echo "⚠️ Badge may have issues: $badge_url"
             fi
           done
-          
-          if grep -q "dev@thinkdatalabs.com" README.md; then
-            echo "✅ Contact email found"
-          else
-            echo "⚠️ Contact email missing"
-          fi
-          
-          if grep -q "thinkdatalabs.com" README.md; then
-            echo "✅ Company website referenced"
-          else
-            echo "⚠️ Company website reference missing"
-          fi
 
-  # Finalize all updates and create comprehensive commit
+  # Finalize updates and commit
   finalize-profile-update:
     runs-on: ubuntu-latest
     name: 🚀 Finalize Profile Updates
     needs: [
       setup-environment,
       update-repository-data,
-      update-github-activity,
-      update-development-stats,
-      update-blog-content,
-      generate-github-metrics
+      update-github-activity
     ]
     if: always() && !cancelled()
     
@@ -674,7 +385,7 @@ jobs:
             echo "✅ Added new timestamp section"
           fi
 
-      - name: Generate comprehensive update summary
+      - name: Generate update summary
         run: |
           echo "📊 Think Data Labs Profile Update Summary" > UPDATE_SUMMARY.md
           echo "============================================" >> UPDATE_SUMMARY.md
@@ -686,9 +397,6 @@ jobs:
           echo "- **Environment Setup:** ${{ needs.setup-environment.result }}" >> UPDATE_SUMMARY.md
           echo "- **Repository Data:** ${{ needs.update-repository-data.result }}" >> UPDATE_SUMMARY.md
           echo "- **GitHub Activity:** ${{ needs.update-github-activity.result }}" >> UPDATE_SUMMARY.md
-          echo "- **Development Stats:** ${{ needs.update-development-stats.result }}" >> UPDATE_SUMMARY.md
-          echo "- **Blog Content:** ${{ needs.update-blog-content.result }}" >> UPDATE_SUMMARY.md
-          echo "- **GitHub Metrics:** ${{ needs.generate-github-metrics.result }}" >> UPDATE_SUMMARY.md
           echo "" >> UPDATE_SUMMARY.md
           
           if [[ "${{ needs.update-repository-data.result }}" == "success" ]] && \
@@ -702,7 +410,6 @@ jobs:
           
           echo "" >> UPDATE_SUMMARY.md
           echo "🔗 **Profile URL:** https://github.com/thinkdatalabs" >> UPDATE_SUMMARY.md
-          echo "📝 **Repository URL:** https://github.com/thinkdatalabs/thinkdatalabs" >> UPDATE_SUMMARY.md
 
       - name: Commit all finalized changes
         run: |
@@ -713,16 +420,11 @@ jobs:
           else
             echo "📝 Committing comprehensive profile updates..."
             
-            COMMIT_MESSAGE="🚀 Think Data Labs: Comprehensive Profile Update (${{ needs.setup-environment.outputs.date_formatted }})
+            COMMIT_MESSAGE="🚀 Think Data Labs: Profile Update (${{ needs.setup-environment.outputs.date_formatted }})
 
             📊 **Updated Components:**
-            $([ "${{ needs.setup-environment.outputs.should_update_repositories }}" == "true" ] && echo "✅ Repository statistics for all projects")
-            $([ "${{ needs.setup-environment.outputs.should_update_activity }}" == "true" ] && echo "✅ Recent GitHub activity and contributions")
-            $([ "${{ needs.setup-environment.outputs.should_update_stats }}" == "true" ] && echo "✅ Development time tracking and coding stats")
-            $([ "${{ needs.setup-environment.outputs.should_update_metrics }}" == "true" ] && echo "✅ Comprehensive GitHub metrics and visualizations")
-            ✅ Blog posts and technical insights
-            ✅ Profile badges and status indicators
-            ✅ Company impact metrics and achievements
+            $([ "${{ needs.setup-environment.outputs.should_update_repositories }}" == "true" ] && echo "✅ Repository statistics table")
+            $([ "${{ needs.setup-environment.outputs.should_update_activity }}" == "true" ] && echo "✅ GitHub activity badges and recent contributions")
             
             🤖 Auto-generated by Think Data Labs Bot"
             

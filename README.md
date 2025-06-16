@@ -304,13 +304,109 @@ Continuous monitoring and optimization to ensure maximum ROI and growth.
 
 ## 📊 GitHub Activity
 
-![GitHub Stats](https://github-readme-stats.vercel.app/api?username=thinkdatalabs&show_icons=true&theme=radical&count_private=true)
+### Overall Statistics
+![GitHub Stats](https://github-readme-stats.vercel.app/api?username=thinkdatalabs&show_icons=true&theme=radical&count_private=true&include_all_commits=true&hide_border=true)
 
-![Top Languages](https://github-readme-stats.vercel.app/api/top-langs/?username=thinkdatalabs&layout=compact&theme=radical)
+### Language Distribution
+![Top Languages](https://github-readme-stats.vercel.app/api/top-langs/?username=thinkdatalabs&layout=compact&theme=radical&count_private=true&hide_border=true&langs_count=8)
+
+### Contribution Graph
+![GitHub Activity Graph](https://github-readme-activity-graph.vercel.app/graph?username=thinkdatalabs&theme=react-dark&hide_border=true&area=true)
+
+### Repository Analytics
+![Repository Stats](https://github-readme-stats.vercel.app/api?username=thinkdatalabs&show_icons=true&theme=radical&count_private=true&show_owner=true&hide_border=true&custom_title=Think%20Data%20Labs%20Repository%20Stats)
+
+### Streak Stats
+![GitHub Streak](https://github-readme-streak-stats.herokuapp.com/?user=thinkdatalabs&theme=radical&hide_border=true)
+
+### Detailed Metrics
+![Metrics](https://metrics.lecoq.io/thinkdatalabs?template=classic&base.header=0&base.activity=0&base.community=0&base.repositories=0&base.metadata=0&activity=1&activity.limit=5&activity.days=14&activity.filter=all&activity.visibility=all&activity.timestamps=false&config.timezone=Asia%2FKolkata)
+
+### Recent Activity
+<!--START_SECTION:activity-->
+<!--END_SECTION:activity-->
+
+## ⚙️ Setting Up Dynamic GitHub Activity Detection
+
+To enable automatic detection of private and public repository activity, follow these steps:
+
+### 1. Generate Personal Access Token
+```bash
+# Go to GitHub Settings > Developer settings > Personal access tokens
+# Create a new token with the following permissions:
+# - repo (for private repository access)
+# - read:user
+# - read:org (if organization repositories)
+```
+
+### 2. Add GitHub Actions Workflow
+Create `.github/workflows/update-stats.yml`:
+
+```yaml
+name: Update GitHub Stats
+
+on:
+  schedule:
+    - cron: '0 */12 * * *' # Update every 12 hours
+  workflow_dispatch:
+
+jobs:
+  update-readme:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Update GitHub Activity
+        uses: jamesgeorge007/github-activity-readme@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          COMMIT_MSG: 'Update GitHub activity'
+          MAX_LINES: 10
+          
+      - name: Update Repository Stats
+        uses: anmol098/waka-readme-stats@master
+        with:
+          WAKATIME_API_KEY: ${{ secrets.WAKATIME_API_KEY }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          SHOW_PROJECTS: "True"
+          SHOW_PROFILE_VIEWS: "True"
+          SHOW_COMMIT: "True"
+          SHOW_DAYS_OF_WEEK: "True"
+          SHOW_LANGUAGE: "True"
+          SHOW_OS: "True"
+          SHOW_TIMEZONE: "True"
+          SHOW_LOC_CHART: "True"
+```
+
+### 3. Environment Variables Setup
+Add these secrets to your repository settings:
+
+- `GITHUB_TOKEN`: Your personal access token
+- `WAKATIME_API_KEY`: (Optional) For detailed coding statistics
+- `GH_TOKEN`: Same as GITHUB_TOKEN for some workflows
+
+### 4. Manual Configuration Options
+
+#### For Private Repository Access:
+```markdown
+<!-- Add &count_private=true to any GitHub stats widget -->
+![Stats](https://github-readme-stats.vercel.app/api?username=USERNAME&count_private=true)
+```
+
+#### For Organization Repositories:
+```markdown
+<!-- Use organization name instead of personal username -->
+![Org Stats](https://github-readme-stats.vercel.app/api?username=ORGANIZATION_NAME&show_owner=true)
+```
+
+#### Custom Metrics Configuration:
+```markdown
+<!-- Include all commits from private repos -->
+![Detailed Stats](https://github-readme-stats.vercel.app/api?username=USERNAME&include_all_commits=true&count_private=true&show_icons=true)
+```
 
 ---
-
-## 🌍 Open Source Contributions
 
 We believe in giving back to the community through open-source projects:
 

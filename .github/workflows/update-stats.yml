@@ -1,221 +1,710 @@
-name: Update GitHub Activity
+name: 📊 Update GitHub Activity Dashboard
 
 on:
   schedule:
-    # Runs every 4 hours
-    - cron: '0 */4 * * *'
+    # Runs every 6 hours to avoid rate limiting
+    - cron: '0 */6 * * *'
   workflow_dispatch: # Allows manual triggering
+    inputs:
+      force_update:
+        description: 'Force update all components'
+        required: false
+        default: 'false'
+        type: boolean
   push:
     branches: [ main, master ]
+    paths: 
+      - '.github/workflows/update-activity.yml'
+      - 'scripts/update_repo_status.py'
+
+env:
+  GITHUB_USERNAME: thinkdatalabs
 
 jobs:
-  update-readme:
-    name: Update README with latest activity
+  # Validate environment and setup
+  validate-setup:
+    name: 🔍 Validate Setup
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    outputs:
+      should-run: ${{ steps.check.outputs.should-run }}
     
     steps:
-      - name: Checkout repository
+      - name: Validate Secrets
+        id: check
+        run: |
+          if [ -z "${{ secrets.PERSONAL_ACCESS_TOKEN }}" ]; then
+            echo "❌ PERSONAL_ACCESS_TOKEN not set"
+            echo "should-run=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          if [ -z "${{ secrets.WAKATIME_API_KEY }}" ]; then
+            echo "⚠️ WAKATIME_API_KEY not set - WakaTime stats will be skipped"
+          fi
+          
+          echo "✅ Required secrets validated"
+          echo "should-run=true" >> $GITHUB_OUTPUT
+
+  # Update repository status and basic activity
+  update-core-activity:
+    name: 🔄 Update Core Activity
+    runs-on: ubuntu-latest
+    needs: validate-setup
+    if: needs.validate-setup.outputs.should-run == 'true'
+    permissions:
+      contents: write
+      actions: read
+    
+    steps:
+      - name: 📥 Checkout Repository
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
           fetch-depth: 0
 
-      - name: Update Recent Activity
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 📦 Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests python-dateutil
+
+      - name: 📊 Update Repository Status
+        run: |
+          # Create the update script from the provided Python code
+          cat > update_repo_status.py << 'EOF'
+          #!/usr/bin/env python3
+          """
+          Enhanced Repository Status Updater
+          Updates the repository status dashboard in README.md with live GitHub data
+          Includes comprehensive error handling, logging, and flexible configuration
+          """
+          
+          import os
+          import re
+          import requests
+          import json
+          import logging
+          from datetime import datetime, timedelta
+          from typing import Dict, List, Optional, Tuple
+          from dataclasses import dataclass
+          from enum import Enum
+          
+          # Configure logging
+          logging.basicConfig(
+              level=logging.INFO,
+              format='%(asctime)s - %(levelname)s - %(message)s',
+              handlers=[
+                  logging.StreamHandler(),
+                  logging.FileHandler('repo_updater.log')
+              ]
+          )
+          logger = logging.getLogger(__name__)
+          
+          class RepoStatus(Enum):
+              """Repository status levels"""
+              VERY_ACTIVE = "Very Active"
+              ACTIVE = "Active"
+              MAINTAINED = "Maintained"
+              INACTIVE = "Inactive"
+              ARCHIVED = "Archived"
+          
+          @dataclass
+          class RepoConfig:
+              """Configuration for repository tracking"""
+              name: str
+              display_name: Optional[str] = None
+              track_issues: bool = True
+              track_prs: bool = True
+              custom_status: Optional[str] = None
+          
+          class GitHubRepoUpdater:
+              """Enhanced GitHub repository status updater"""
+              
+              def __init__(self, username: str, token: str):
+                  self.username = username
+                  self.token = token
+                  self.headers = {
+                      'Authorization': f'token {token}',
+                      'Accept': 'application/vnd.github.v3+json',
+                      'User-Agent': f'GitHub-Updater/{username}'
+                  }
+                  self.api_base = 'https://api.github.com'
+                  self.session = requests.Session()
+                  self.session.headers.update(self.headers)
+                  
+                  # Rate limiting
+                  self.rate_limit_remaining = None
+                  self.rate_limit_reset = None
+                  
+                  logger.info(f"Initialized GitHubRepoUpdater for user: {username}")
+              
+              def _check_rate_limit(self) -> bool:
+                  """Check GitHub API rate limit"""
+                  try:
+                      response = self.session.get(f'{self.api_base}/rate_limit')
+                      response.raise_for_status()
+                      data = response.json()
+                      
+                      core_limit = data['resources']['core']
+                      self.rate_limit_remaining = core_limit['remaining']
+                      self.rate_limit_reset = datetime.fromtimestamp(core_limit['reset'])
+                      
+                      logger.info(f"Rate limit: {self.rate_limit_remaining} requests remaining")
+                      
+                      if self.rate_limit_remaining < 10:
+                          logger.warning(f"Low rate limit: {self.rate_limit_remaining} requests remaining")
+                          return False
+                      return True
+                      
+                  except Exception as e:
+                      logger.error(f"Error checking rate limit: {e}")
+                      return True  # Continue if rate limit check fails
+              
+              def _make_request(self, url: str, params: Optional[Dict] = None) -> Optional[Dict]:
+                  """Make authenticated request to GitHub API with error handling"""
+                  try:
+                      response = self.session.get(url, params=params, timeout=30)
+                      response.raise_for_status()
+                      return response.json()
+                  except requests.exceptions.Timeout:
+                      logger.error(f"Timeout error for URL: {url}")
+                      return None
+                  except requests.exceptions.HTTPError as e:
+                      if response.status_code == 404:
+                          logger.warning(f"Resource not found: {url}")
+                      elif response.status_code == 403:
+                          logger.error(f"Rate limit or permission error: {url}")
+                      else:
+                          logger.error(f"HTTP error {response.status_code} for URL: {url}")
+                      return None
+                  except requests.RequestException as e:
+                      logger.error(f"Request error for URL {url}: {e}")
+                      return None
+              
+              def get_repo_info(self, repo_name: str) -> Optional[Dict]:
+                  """Fetch comprehensive repository information"""
+                  if not self._check_rate_limit():
+                      return None
+                      
+                  url = f'{self.api_base}/repos/{self.username}/{repo_name}'
+                  data = self._make_request(url)
+                  
+                  if data:
+                      logger.info(f"Successfully fetched info for {repo_name}")
+                  else:
+                      logger.warning(f"Failed to fetch info for {repo_name}")
+                      
+                  return data
+              
+              def get_repo_commits(self, repo_name: str, days: int = 30) -> List[Dict]:
+                  """Get recent commits with pagination support"""
+                  since_date = (datetime.now() - timedelta(days=days)).isoformat()
+                  url = f'{self.api_base}/repos/{self.username}/{repo_name}/commits'
+                  params = {
+                      'since': since_date,
+                      'per_page': 100,
+                      'page': 1
+                  }
+                  
+                  all_commits = []
+                  
+                  while True:
+                      data = self._make_request(url, params)
+                      if not data:
+                          break
+                          
+                      all_commits.extend(data)
+                      
+                      # Check if there are more pages
+                      if len(data) < 100:
+                          break
+                      params['page'] += 1
+                      
+                      # Safety limit to prevent infinite loops
+                      if params['page'] > 10:
+                          break
+                  
+                  logger.info(f"Fetched {len(all_commits)} commits for {repo_name}")
+                  return all_commits
+              
+              def get_repo_languages(self, repo_name: str) -> Dict[str, int]:
+                  """Get programming languages used in repository"""
+                  url = f'{self.api_base}/repos/{self.username}/{repo_name}/languages'
+                  data = self._make_request(url)
+                  return data or {}
+              
+              def get_primary_language(self, languages: Dict[str, int]) -> str:
+                  """Determine primary language from language statistics"""
+                  if not languages:
+                      return "Unknown"
+                  return max(languages.items(), key=lambda x: x[1])[0]
+              
+              def calculate_repo_status(self, repo_info: Dict, commits: List[Dict]) -> RepoStatus:
+                  """Calculate repository status based on multiple factors"""
+                  if repo_info.get('archived', False):
+                      return RepoStatus.ARCHIVED
+                  
+                  if not commits:
+                      return RepoStatus.INACTIVE
+                  
+                  # Analyze commit frequency
+                  now = datetime.now()
+                  recent_commits_30d = len([
+                      c for c in commits 
+                      if self._parse_github_date(c['commit']['author']['date']) > now - timedelta(days=30)
+                  ])
+                  recent_commits_7d = len([
+                      c for c in commits 
+                      if self._parse_github_date(c['commit']['author']['date']) > now - timedelta(days=7)
+                  ])
+                  
+                  # Determine status based on activity
+                  if recent_commits_7d >= 5 or recent_commits_30d >= 20:
+                      return RepoStatus.VERY_ACTIVE
+                  elif recent_commits_30d >= 5:
+                      return RepoStatus.ACTIVE
+                  elif recent_commits_30d >= 1:
+                      return RepoStatus.MAINTAINED
+                  else:
+                      return RepoStatus.INACTIVE
+              
+              def _parse_github_date(self, date_string: str) -> datetime:
+                  """Parse GitHub date string to datetime object"""
+                  try:
+                      return datetime.fromisoformat(date_string.replace('Z', '+00:00')).replace(tzinfo=None)
+                  except:
+                      return datetime.min
+              
+              def get_language_badge(self, language: str) -> str:
+                  """Get language badge markdown with comprehensive language support"""
+                  language_badges = {
+                      'Python': '![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)',
+                      'JavaScript': '![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?style=flat&logo=javascript&logoColor=black)',
+                      'TypeScript': '![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=flat&logo=typescript&logoColor=white)',
+                      'React': '![React](https://img.shields.io/badge/React-20232A?style=flat&logo=react&logoColor=61DAFB)',
+                      'Next.js': '![Next.js](https://img.shields.io/badge/Next.js-000000?style=flat&logo=next.js&logoColor=white)',
+                      'Java': '![Java](https://img.shields.io/badge/Java-ED8B00?style=flat&logo=java&logoColor=white)',
+                      'Go': '![Go](https://img.shields.io/badge/Go-00ADD8?style=flat&logo=go&logoColor=white)',
+                      'HTML': '![HTML](https://img.shields.io/badge/HTML-E34F26?style=flat&logo=html5&logoColor=white)',
+                      'CSS': '![CSS](https://img.shields.io/badge/CSS-1572B6?style=flat&logo=css3&logoColor=white)',
+                  }
+                  return language_badges.get(language, f'![{language}](https://img.shields.io/badge/{language.replace(" ", "%20")}-gray?style=flat)')
+              
+              def get_status_badge(self, status: RepoStatus) -> str:
+                  """Get status badge markdown"""
+                  status_colors = {
+                      RepoStatus.VERY_ACTIVE: 'brightgreen',
+                      RepoStatus.ACTIVE: 'green',
+                      RepoStatus.MAINTAINED: 'yellow',
+                      RepoStatus.INACTIVE: 'red',
+                      RepoStatus.ARCHIVED: 'lightgray'
+                  }
+                  color = status_colors.get(status, 'gray')
+                  status_text = status.value.replace(' ', '%20')
+                  return f'![{status.value}](https://img.shields.io/badge/Status-{status_text}-{color})'
+              
+              def process_repository(self, repo_config: RepoConfig) -> Optional[str]:
+                  """Process a single repository and return table row"""
+                  repo_name = repo_config.name
+                  display_name = repo_config.display_name or repo_name
+                  
+                  logger.info(f"Processing repository: {repo_name}")
+                  
+                  # Get repository information
+                  repo_info = self.get_repo_info(repo_name)
+                  if not repo_info:
+                      logger.error(f"Skipping {repo_name} - could not fetch info")
+                      return None
+                  
+                  # Get repository statistics
+                  commits = self.get_repo_commits(repo_name, days=90)
+                  languages = self.get_repo_languages(repo_name)
+                  
+                  # Calculate metrics
+                  primary_language = self.get_primary_language(languages)
+                  status = self.calculate_repo_status(repo_info, commits)
+                  
+                  # Format badges
+                  status_badge = self.get_status_badge(status)
+                  language_badge = self.get_language_badge(primary_language)
+                  stars_badge = f'![Stars](https://img.shields.io/github/stars/{self.username}/{repo_name}?style=flat)'
+                  forks_badge = f'![Forks](https://img.shields.io/github/forks/{self.username}/{repo_name}?style=flat)'
+                  issues_badge = f'![Issues](https://img.shields.io/github/issues/{self.username}/{repo_name}?style=flat)'
+                  last_commit_badge = f'![Last Commit](https://img.shields.io/github/last-commit/{self.username}/{repo_name}?style=flat)'
+                  
+                  # Create table row
+                  row = f"| {display_name} | {status_badge} | {language_badge} | {stars_badge} | {forks_badge} | {issues_badge} | {last_commit_badge} |"
+                  
+                  logger.info(f"Successfully processed {repo_name}")
+                  return row
+              
+              def update_repository_table(self, readme_content: str, repo_configs: List[RepoConfig]) -> str:
+                  """Update the repository status table in README content"""
+                  
+                  # Build new table rows
+                  new_rows = []
+                  successful_repos = 0
+                  
+                  for repo_config in repo_configs:
+                      row = self.process_repository(repo_config)
+                      if row:
+                          new_rows.append(row)
+                          successful_repos += 1
+                  
+                  if not new_rows:
+                      logger.error("No repositories were successfully processed")
+                      return readme_content
+                  
+                  # Find and replace the table in README
+                  table_pattern = r'(\| Repository \| Status \| Language \| Stars \| Forks \| Issues \| Last Commit \|\n\|[^\n]*\n)((?:\|.*?\n)*)'
+                  
+                  if re.search(table_pattern, readme_content, re.MULTILINE):
+                      # Build new table
+                      header_row = "| Repository | Status | Language | Stars | Forks | Issues | Last Commit |"
+                      separator_row = "|------------|--------|----------|-------|-------|--------|-------------|"
+                      new_table = header_row + "\n" + separator_row + "\n" + "\n".join(new_rows)
+                      
+                      # Replace existing table
+                      readme_content = re.sub(
+                          table_pattern,
+                          new_table + '\n\n',
+                          readme_content,
+                          flags=re.MULTILINE
+                      )
+                      
+                      logger.info(f"Successfully updated table with {successful_repos} repositories")
+                  else:
+                      logger.warning("Could not find repository table to update")
+                  
+                  return readme_content
+              
+              def update_activity_stats(self, readme_content: str) -> str:
+                  """Update activity statistics in README"""
+                  
+                  try:
+                      user_url = f'{self.api_base}/users/{self.username}'
+                      user_data = self._make_request(user_url)
+                      
+                      if user_data:
+                          # Update last updated timestamp
+                          timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
+                          timestamp_pattern = r'(<!-- LAST_UPDATED:)(.*?)(-->)'
+                          
+                          if re.search(timestamp_pattern, readme_content):
+                              readme_content = re.sub(
+                                  timestamp_pattern,
+                                  f'\\1{timestamp}\\3',
+                                  readme_content
+                              )
+                          else:
+                              # Add timestamp if not present
+                              readme_content += f"\n\n<!-- LAST_UPDATED:{timestamp} -->\n"
+                      
+                  except Exception as e:
+                      logger.error(f"Error updating activity stats: {e}")
+                  
+                  return readme_content
+          
+          def load_config() -> Tuple[str, str, List[RepoConfig]]:
+              """Load configuration from environment variables and return settings"""
+              
+              # Get environment variables
+              github_token = os.environ.get('GITHUB_TOKEN') or os.environ.get('PERSONAL_ACCESS_TOKEN')
+              username = os.environ.get('GITHUB_USERNAME', 'thinkdatalabs')
+              
+              if not github_token:
+                  raise ValueError("GITHUB_TOKEN or PERSONAL_ACCESS_TOKEN environment variable not set")
+              
+              # Repository configurations
+              repo_configs = [
+                  RepoConfig(
+                      name='python-data-analytics',
+                      display_name='Python Data Analytics',
+                      track_issues=True,
+                      track_prs=True
+                  ),
+                  RepoConfig(
+                      name='ml-model-deployment',
+                      display_name='ML Model Deployment',
+                      track_issues=True,
+                      track_prs=True
+                  ),
+                  RepoConfig(
+                      name='react-component-library',
+                      display_name='React Component Library',
+                      track_issues=True,
+                      track_prs=True
+                  ),
+                  RepoConfig(
+                      name='nextjs-applications',
+                      display_name='Next.js Applications',
+                      track_issues=True,
+                      track_prs=True
+                  ),
+              ]
+              
+              return github_token, username, repo_configs
+          
+          def main():
+              """Main function to run the repository status updater"""
+              
+              try:
+                  # Load configuration
+                  github_token, username, repo_configs = load_config()
+                  
+                  # Initialize updater
+                  updater = GitHubRepoUpdater(username, github_token)
+                  
+                  # Check README.md exists
+                  readme_path = 'README.md'
+                  if not os.path.exists(readme_path):
+                      logger.error(f"Error: {readme_path} not found")
+                      return 1
+                  
+                  # Read README.md
+                  with open(readme_path, 'r', encoding='utf-8') as file:
+                      readme_content = file.read()
+                  
+                  logger.info("Starting repository status update...")
+                  
+                  # Update repository status table
+                  logger.info("Updating repository status table...")
+                  updated_content = updater.update_repository_table(readme_content, repo_configs)
+                  
+                  # Update activity statistics
+                  logger.info("Updating activity statistics...")
+                  updated_content = updater.update_activity_stats(updated_content)
+                  
+                  # Write updated content back to README
+                  with open(readme_path, 'w', encoding='utf-8') as file:
+                      file.write(updated_content)
+                  
+                  logger.info("✅ Repository status updated successfully!")
+                  return 0
+                  
+              except Exception as e:
+                  logger.error(f"Fatal error: {e}")
+                  return 1
+          
+          if __name__ == "__main__":
+              exit(main())
+          EOF
+          
+          # Run the updater
+          python update_repo_status.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          GITHUB_USERNAME: ${{ env.GITHUB_USERNAME }}
+
+      - name: 📝 Update Recent Activity
         uses: jamesgeorge007/github-activity-readme@master
         env:
           GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
         with:
-          COMMIT_MSG: 'Update recent activity in README'
-          MAX_LINES: 10
+          COMMIT_MSG: '📊 Update recent activity'
+          MAX_LINES: 8
+          COMMIT_NAME: 'github-actions[bot]'
+          COMMIT_EMAIL: 'github-actions[bot]@users.noreply.github.com'
 
-      - name: Update WakaTime Stats
+      - name: 📈 Generate Basic Stats
+        run: |
+          # Create a simple stats update script
+          cat > update_basic_stats.py << 'EOF'
+          import os
+          import requests
+          import json
+          from datetime import datetime
+          
+          token = os.environ['GITHUB_TOKEN']
+          username = os.environ['GITHUB_USERNAME']
+          
+          headers = {
+              'Authorization': f'token {token}',
+              'Accept': 'application/vnd.github.v3+json'
+          }
+          
+          # Get user stats
+          user_response = requests.get(f'https://api.github.com/users/{username}', headers=headers)
+          if user_response.status_code == 200:
+              user_data = user_response.json()
+              
+              stats = {
+                  'public_repos': user_data.get('public_repos', 0),
+                  'followers': user_data.get('followers', 0),
+                  'following': user_data.get('following', 0),
+                  'created_at': user_data.get('created_at', ''),
+                  'updated_at': datetime.now().isoformat()
+              }
+              
+              print(f"📊 Stats Summary:")
+              print(f"  🗂️  Public Repos: {stats['public_repos']}")
+              print(f"  👥 Followers: {stats['followers']}")
+              print(f"  👤 Following: {stats['following']}")
+              
+              # Save stats to file for potential use by other jobs
+              with open('github_stats.json', 'w') as f:
+                  json.dump(stats, f, indent=2)
+                  
+          else:
+              print(f"❌ Failed to fetch user stats: {user_response.status_code}")
+          EOF
+          
+          python update_basic_stats.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          GITHUB_USERNAME: ${{ env.GITHUB_USERNAME }}
+
+      - name: 💾 Cache Generated Data
+        uses: actions/cache@v3
+        with:
+          path: |
+            github_stats.json
+            update_summary.txt
+          key: github-data-${{ runner.os }}-${{ github.run_id }}
+
+      - name: 📤 Commit Core Updates
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          # Add all changes
+          git add .
+          
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "ℹ️ No core activity changes to commit"
+          else
+            git commit -m "📊 Update core GitHub activity [automated]
+            
+            - Updated repository status table
+            - Refreshed recent activity feed  
+            - Updated basic statistics
+            
+            Generated at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            
+            git push
+            echo "✅ Core updates committed and pushed"
+          fi
+
+  # Update WakaTime stats (optional)
+  update-wakatime-stats:
+    name: 📊 Update WakaTime Stats
+    runs-on: ubuntu-latest
+    needs: [validate-setup, update-core-activity]
+    if: needs.validate-setup.outputs.should-run == 'true' && secrets.WAKATIME_API_KEY != ''
+    continue-on-error: true # Don't fail the entire workflow if WakaTime fails
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          fetch-depth: 0
+
+      - name: 📊 Update WakaTime Stats
         uses: anmol098/waka-readme-stats@master
         with:
           WAKATIME_API_KEY: ${{ secrets.WAKATIME_API_KEY }}
           GH_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-          REPOSITORY: thinkdatalabs/thinkdatalabs
-          SHOW_LINES_OF_CODE: true
-          SHOW_PROFILE_VIEWS: false
-          SHOW_COMMIT: true
-          SHOW_DAYS_OF_WEEK: true
-          SHOW_LANGUAGE: true
-          SHOW_OS: true
-          SHOW_PROJECTS: true
-          SHOW_TIMEZONE: true
-          SHOW_EDITORS: true
-          SHOW_LANGUAGE_PER_REPO: true
-          SHOW_SHORT_INFO: true
-          SHOW_LOC_CHART: true
+          SHOW_LINES_OF_CODE: "True"
+          SHOW_PROFILE_VIEWS: "False"
+          SHOW_DAYS_OF_WEEK: "True"
+          SHOW_LANGUAGE: "True"
+          SHOW_OS: "True"
+          SHOW_PROJECTS: "True"
+          SHOW_TIMEZONE: "True"
+          SHOW_EDITORS: "True"
+          SHOW_LANGUAGE_PER_REPO: "True"
+          SHOW_LOC_CHART: "False"
+          SHOW_SHORT_INFO: "True"
+          SHOW_UPDATED_DATE: "True"
+          LOCALE: "en"
 
-      - name: Generate GitHub Stats
-        uses: teoxoy/profile-readme-stats@v1
-        with:
-          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-
-      - name: Update Repository Status
-        run: |
-          # Create a script to update repository status
-          cat > update_repo_status.py << 'EOF'
-          import os
-          import requests
-          import re
-          from datetime import datetime
-
-          # GitHub API configuration
-          GITHUB_TOKEN = os.environ['GITHUB_TOKEN']
-          USERNAME = 'thinkdatalabs'
-          
-          headers = {
-              'Authorization': f'token {GITHUB_TOKEN}',
-              'Accept': 'application/vnd.github.v3+json'
-          }
-
-          def get_repo_info(repo_name):
-              url = f'https://api.github.com/repos/{USERNAME}/{repo_name}'
-              response = requests.get(url, headers=headers)
-              if response.status_code == 200:
-                  return response.json()
-              return None
-
-          def format_date(date_string):
-              if date_string:
-                  date_obj = datetime.strptime(date_string, '%Y-%m-%dT%H:%M:%SZ')
-                  return date_obj.strftime('%Y-%m-%d')
-              return 'N/A'
-
-          # Repositories to update
-          repositories = [
-              'python-data-analytics',
-              'ml-model-deployment', 
-              'react-component-library',
-              'nextjs-applications'
-          ]
-
-          # Read current README
-          with open('README.md', 'r') as file:
-              content = file.read()
-
-          # Update repository table
-          for repo in repositories:
-              repo_info = get_repo_info(repo)
-              if repo_info:
-                  # Extract current values
-                  stars = repo_info.get('stargazers_count', 0)
-                  forks = repo_info.get('forks_count', 0)
-                  open_issues = repo_info.get('open_issues_count', 0)
-                  last_commit = format_date(repo_info.get('updated_at'))
-                  
-                  print(f"Updating {repo}: Stars={stars}, Forks={forks}, Issues={open_issues}, Last Commit={last_commit}")
-
-          # Write updated content back to README
-          with open('README.md', 'w') as file:
-              file.write(content)
-
-          print("Repository status updated successfully!")
-          EOF
-
-          python update_repo_status.py
-        env:
-          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-
-      - name: Update Profile Views Counter
-        uses: antonkomarev/github-profile-views-counter-action@master
-        with:
-          github_token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-          viewer_token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-
-      - name: Commit and Push Changes
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add .
-          if git diff --staged --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "📊 Update GitHub activity and stats [automated]" || exit 0
-            git push
-          fi
-
-      - name: Update GitHub Profile Trophy
-        uses: ryo-ma/github-profile-trophy@master
-        with:
-          username: thinkdatalabs
-          theme: radical
-          no-frame: true
-          no-bg: false
-          margin-w: 4
-
-  update-blog-posts:
-    name: Update Latest Blog Posts
+  # Generate summary report
+  generate-summary:
+    name: 📋 Generate Summary Report
     runs-on: ubuntu-latest
-    needs: update-readme
+    needs: [update-core-activity, update-wakatime-stats]
+    if: always() && needs.validate-setup.outputs.should-run == 'true'
     
     steps:
-      - name: Checkout repository
+      - name: 📥 Checkout Repository
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
-      - name: Update Blog Posts
-        uses: gautamkrishnar/blog-post-workflow@master
+      - name: 🔄 Restore Cache
+        uses: actions/cache@v3
         with:
-          comment_tag_name: "BLOG-POST-LIST"
-          feed_list: "https://thinkdatalabs.com/feed.xml,https://dev.to/feed/thinkdatalabs"
-          max_post_count: 5
-          template: "- [$title]($url) - $date"
-          date_format: "mmm dd, yyyy"
+          path: |
+            github_stats.json
+            update_summary.txt
+          key: github-data-${{ runner.os }}-${{ github.run_id }}
+
+      - name: 📋 Generate Workflow Summary
+        run: |
+          echo "## 📊 GitHub Activity Dashboard Update Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Timestamp:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "**Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           
-      - name: Commit Blog Updates
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add .
-          if git diff --staged --quiet; then
-            echo "No blog updates to commit"
+          # Core Activity Status
+          if [ "${{ needs.update-core-activity.result }}" = "success" ]; then
+            echo "✅ **Core Activity Update:** SUCCESS" >> $GITHUB_STEP_SUMMARY
           else
-            git commit -m "📝 Update latest blog posts [automated]" || exit 0
-            git push
+            echo "❌ **Core Activity Update:** FAILED" >> $GITHUB_STEP_SUMMARY
           fi
+          
+          # WakaTime Status
+          if [ "${{ needs.update-wakatime-stats.result }}" = "success" ]; then
+            echo "✅ **WakaTime Stats Update:** SUCCESS" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.update-wakatime-stats.result }}" = "skipped" ]; then
+            echo "⏭️ **WakaTime Stats Update:** SKIPPED (API key not configured)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ **WakaTime Stats Update:** FAILED (non-critical)" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Display stats if available
+          if [ -f "github_stats.json" ]; then
+            echo "### 📈 Updated Statistics" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            python3 -c "
+          import json
+          try:
+              with open('github_stats.json', 'r') as f:
+                  stats = json.load(f)
+              print(f'- 🗂️ **Public Repositories:** {stats.get(\"public_repos\", \"N/A\")}')
+              print(f'- 👥 **Followers:** {stats.get(\"followers\", \"N/A\")}')
+              print(f'- 👤 **Following:** {stats.get(\"following\", \"N/A\")}')
+          except:
+              print('- ⚠️ Stats data not available')
+          " >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ⚠️ **Stats data not available**" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*This summary was automatically generated by the GitHub Activity Dashboard workflow.*" >> $GITHUB_STEP_SUMMARY
 
-  generate-snake:
-    name: Generate Snake Animation
-    runs-on: ubuntu-latest
-    needs: update-readme
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Generate Snake
-        uses: Platane/snk@master
-        id: snake-gif
-        with:
-          github_user_name: thinkdatalabs
-          svg_out_path: dist/github-contribution-grid-snake.svg
-          gif_out_path: dist/github-contribution-grid-snake.gif
-
-      - name: Push Snake to Output Branch
-        uses: crazy-max/ghaction-github-pages@v3.1.0
-        with:
-          target_branch: output
-          build_dir: dist
-        env:
-          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-
-  notify-completion:
-    name: Notify Completion
-    runs-on: ubuntu-latest
-    needs: [update-readme, update-blog-posts, generate-snake]
-    if: always()
-    
-    steps:
-      - name: Notification
+      - name: 🎯 Job Status Notification
+        if: always()
         run: |
-          echo "🎉 GitHub Activity Update Workflow Completed!"
-          echo "✅ README updated with latest activity"
-          echo "✅ Repository status refreshed" 
-          echo "✅ Blog posts updated"
-          echo "✅ Snake animation generated"
-          echo "📊 All GitHub statistics are now current"
+          if [ "${{ needs.update-core-activity.result }}" = "success" ]; then
+            echo "🎉 GitHub Activity Dashboard update completed successfully!"
+            echo "📊 Repository status table updated"
+            echo "📝 Recent activity refreshed"
+            echo "📈 Basic statistics updated"
+          else
+            echo "❌ GitHub Activity Dashboard update encountered issues"
+            echo "Please check the workflow logs for details"
+            exit 1
+          fi

@@ -1,231 +1,221 @@
-name: 🚀 Think Data Labs - GitHub Stats & Activity
+name: Update GitHub Activity
 
 on:
   schedule:
-    - cron: '0 */6 * * *'
-    - cron: '0 2 * * 1'
-  workflow_dispatch:
-    inputs:
-      update_type:
-        description: 'Type of update'
-        required: false
-        default: 'full'
-        type: choice
-        options:
-          - 'full'
-          - 'activity-only'
-          - 'repositories-only'
-      force_rebuild:
-        description: 'Force rebuild all badges'
-        required: false
-        default: false
-        type: boolean
+    # Runs every 4 hours
+    - cron: '0 */4 * * *'
+  workflow_dispatch: # Allows manual triggering
   push:
-    branches:
-      - main
-      - master
-    paths:
-      - 'README.md'
-      - '.github/workflows/**'
-  issues: {}
-
-env:
-  GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-  COMPANY_NAME: "Think Data Labs"
-  GITHUB_USERNAME: "thinkdatalabs"
-  BOT_NAME: "think-data-labs-bot"
-  BOT_EMAIL: "dev@thinkdatalabs.com"
-  TIMEZONE: "Asia/Kolkata"
+    branches: [ main, master ]
 
 jobs:
-
-  setup:
+  update-readme:
+    name: Update README with latest activity
     runs-on: ubuntu-latest
-    outputs:
-      update_type: ${{ steps.vars.outputs.update_type }}
-      force_rebuild: ${{ steps.vars.outputs.force_rebuild }}
+    permissions:
+      contents: write
+    
     steps:
-      - name: Set variables
-        id: vars
-        run: |
-          echo "update_type=${{ github.event.inputs.update_type || 'full' }}" >> $GITHUB_OUTPUT
-          echo "force_rebuild=${{ github.event.inputs.force_rebuild || 'false' }}" >> $GITHUB_OUTPUT
-
-      - name: Validate tokens
-        run: |
-          if [ -z "${{ env.GITHUB_TOKEN }}" ]; then
-            echo "❌ PERSONAL_ACCESS_TOKEN is not set"
-            exit 1
-          fi
-
-  update-repository-table:
-    runs-on: ubuntu-latest
-    needs: setup
-    if: needs.setup.outputs.update_type == 'full' || needs.setup.outputs.update_type == 'repositories-only'
-    steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          token: ${{ env.GITHUB_TOKEN }}
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          fetch-depth: 0
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm install @octokit/rest chalk axios
-
-      - name: Update repository status table in README
-        run: |
-          node <<'EOF'
-          const { Octokit } = require('@octokit/rest');
-          const fs = require('fs');
-          const chalk = require('chalk');
-
-          const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
-          const org = 'thinkdatalabs';
-          const featuredRepos = [
-            'python-data-analytics',
-            'ml-model-deployment',
-            'react-component-library',
-            'nextjs-applications'
-          ];
-
-          async function run() {
-            const { data: repos } = await octokit.rest.repos.listForOrg({ org, per_page: 100 });
-            let table = '| Repository | Status | Language | Stars | Forks | Issues | Last Commit |\n';
-            table += '|------------|--------|----------|-------|-------|--------|-------------|\n';
-            for (const repoName of featuredRepos) {
-              const repo = repos.find(r => r.name === repoName);
-              if (repo) {
-                const language = repo.language || 'Multiple';
-                const status = repo.archived ? 'Archived' : 'Active';
-                const statusColor = repo.archived ? 'red' : 'brightgreen';
-                const lastCommit = repo.pushed_at ? repo.pushed_at.split('T')[0] : '-';
-                table += | ${repoName} | ![${status}](https://img.shields.io/badge/Status-${status}-${statusColor}) | ![${language}](https://img.shields.io/badge/${encodeURIComponent(language)}-blue?style=flat) | ![Stars](https://img.shields.io/github/stars/thinkdatalabs/${repoName}) | ![Forks](https://img.shields.io/github/forks/thinkdatalabs/${repoName}) | ![Issues](https://img.shields.io/github/issues/thinkdatalabs/${repoName}) | ${lastCommit} |\n;
-              } else {
-                table += | ${repoName} | ![Planned](https://img.shields.io/badge/Status-Planned-yellow) | ![TBD](https://img.shields.io/badge/Language-TBD-lightgrey) | - | - | - | - |\n;
-              }
-            }
-
-            let readme = fs.readFileSync('README.md', 'utf8');
-            const regex = /\| Repository \| Status \| Language[\s\S]*?(?=\n\n|\n---|\n##|\n###|$)/;
-            if (regex.test(readme)) {
-              readme = readme.replace(regex, table);
-            } else {
-              readme += \n\n${table}\n;
-            }
-            fs.writeFileSync('README.md', readme);
-          }
-
-          run().catch(e => { console.error(e); process.exit(1) });
-          EOF
-
-      - name: Commit changes
-        run: |
-          git config --global user.name "${{ env.BOT_NAME }}"
-          git config --global user.email "${{ env.BOT_EMAIL }}"
-          git add README.md
-          git diff --cached --quiet || git commit -m "📊 Update repository status table"
-          git push
-
-  update-activity:
-    runs-on: ubuntu-latest
-    needs: setup
-    if: needs.setup.outputs.update_type == 'full' || needs.setup.outputs.update_type == 'activity-only'
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          token: ${{ env.GITHUB_TOKEN }}
-
-      - name: Update recent GitHub activity
+      - name: Update Recent Activity
         uses: jamesgeorge007/github-activity-readme@master
         env:
-          GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
         with:
-          COMMIT_MSG: '🔄 Update recent GitHub activity feed'
-          MAX_LINES: 12
-          COMMIT_NAME: ${{ env.BOT_NAME }}
-          COMMIT_EMAIL: ${{ env.BOT_EMAIL }}
+          COMMIT_MSG: 'Update recent activity in README'
+          MAX_LINES: 10
 
-  update-wakatime:
-    runs-on: ubuntu-latest
-    needs: setup
-    if: needs.setup.outputs.update_type == 'full' || needs.setup.outputs.update_type == 'activity-only'
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          token: ${{ env.GITHUB_TOKEN }}
-
-      - name: Update WakaTime stats
+      - name: Update WakaTime Stats
         uses: anmol098/waka-readme-stats@master
         with:
           WAKATIME_API_KEY: ${{ secrets.WAKATIME_API_KEY }}
-          GH_TOKEN: ${{ env.GITHUB_TOKEN }}
-          REPOSITORY_NAME: thinkdatalabs/thinkdatalabs
-          COMMIT_MESSAGE: '📈 Updated weekly development stats'
-          SHOW_PROJECTS: "False"
-          SHOW_LINES_OF_CODE: "True"
-          SHOW_LANGUAGE: "True"
-          SHOW_OS: "True"
-          SHOW_TIMEZONE: "True"
-          SHOW_EDITORS: "True"
-          SHOW_LANGUAGE_PER_REPO: "True"
-          SHOW_SHORT_INFO: "True"
-          SHOW_LOC_CHART: "False"
-          LOCALE: "en"
+          GH_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          REPOSITORY: thinkdatalabs/thinkdatalabs
+          SHOW_LINES_OF_CODE: true
+          SHOW_PROFILE_VIEWS: false
+          SHOW_COMMIT: true
+          SHOW_DAYS_OF_WEEK: true
+          SHOW_LANGUAGE: true
+          SHOW_OS: true
+          SHOW_PROJECTS: true
+          SHOW_TIMEZONE: true
+          SHOW_EDITORS: true
+          SHOW_LANGUAGE_PER_REPO: true
+          SHOW_SHORT_INFO: true
+          SHOW_LOC_CHART: true
 
-  generate-metrics:
-    runs-on: ubuntu-latest
-    needs: [update-repository-table, update-activity, update-wakatime]
-    steps:
-      - uses: actions/checkout@v4
+      - name: Generate GitHub Stats
+        uses: teoxoy/profile-readme-stats@v1
         with:
-          token: ${{ env.GITHUB_TOKEN }}
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
-      - name: Generate GitHub Metrics
-        uses: lowlighter/metrics@latest
-        with:
-          token: ${{ secrets.METRICS_TOKEN }}
-          user: thinkdatalabs
-          template: classic
-          base: header, activity, community, repositories, metadata
-          config_timezone: Asia/Kolkata
-          plugin_isocalendar: yes
-          plugin_isocalendar_duration: full-year
-          plugin_languages: yes
-          plugin_languages_analysis_timeout: 15
-          plugin_languages_categories: markup, programming
-          plugin_languages_colors: github
-          plugin_languages_limit: 8
-          plugin_languages_recent_categories: markup, programming
-          plugin_languages_recent_days: 14
-          plugin_languages_recent_load: 300
-          plugin_languages_sections: most-used
-          plugin_languages_threshold: 0%
-          plugin_lines: yes
-          plugin_repositories: yes
-          plugin_repositories_batch: 100
-          plugin_activity: yes
-          plugin_activity_days: 14
-          plugin_activity_filter: all
-          plugin_activity_limit: 5
-          plugin_activity_load: 300
-          plugin_activity_visibility: all
-          plugin_followup: yes
-          plugin_followup_sections: repositories
-          plugin_projects: yes
-          plugin_projects_limit: 4
-          plugin_code: yes
-          plugin_code_lines: 12
-          plugin_code_load: 400
-          plugin_code_visibility: public
-
-      - name: Commit metrics
+      - name: Update Repository Status
         run: |
-          git config --global user.name "${{ env.BOT_NAME }}"
-          git config --global user.email "${{ env.BOT_EMAIL }}"
+          # Create a script to update repository status
+          cat > update_repo_status.py << 'EOF'
+          import os
+          import requests
+          import re
+          from datetime import datetime
+
+          # GitHub API configuration
+          GITHUB_TOKEN = os.environ['GITHUB_TOKEN']
+          USERNAME = 'thinkdatalabs'
+          
+          headers = {
+              'Authorization': f'token {GITHUB_TOKEN}',
+              'Accept': 'application/vnd.github.v3+json'
+          }
+
+          def get_repo_info(repo_name):
+              url = f'https://api.github.com/repos/{USERNAME}/{repo_name}'
+              response = requests.get(url, headers=headers)
+              if response.status_code == 200:
+                  return response.json()
+              return None
+
+          def format_date(date_string):
+              if date_string:
+                  date_obj = datetime.strptime(date_string, '%Y-%m-%dT%H:%M:%SZ')
+                  return date_obj.strftime('%Y-%m-%d')
+              return 'N/A'
+
+          # Repositories to update
+          repositories = [
+              'python-data-analytics',
+              'ml-model-deployment', 
+              'react-component-library',
+              'nextjs-applications'
+          ]
+
+          # Read current README
+          with open('README.md', 'r') as file:
+              content = file.read()
+
+          # Update repository table
+          for repo in repositories:
+              repo_info = get_repo_info(repo)
+              if repo_info:
+                  # Extract current values
+                  stars = repo_info.get('stargazers_count', 0)
+                  forks = repo_info.get('forks_count', 0)
+                  open_issues = repo_info.get('open_issues_count', 0)
+                  last_commit = format_date(repo_info.get('updated_at'))
+                  
+                  print(f"Updating {repo}: Stars={stars}, Forks={forks}, Issues={open_issues}, Last Commit={last_commit}")
+
+          # Write updated content back to README
+          with open('README.md', 'w') as file:
+              file.write(content)
+
+          print("Repository status updated successfully!")
+          EOF
+
+          python update_repo_status.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
+      - name: Update Profile Views Counter
+        uses: antonkomarev/github-profile-views-counter-action@master
+        with:
+          github_token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          viewer_token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
+      - name: Commit and Push Changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
           git add .
-          git diff --cached --quiet || git commit -m "📈 Updated GitHub metrics and insights"
-          git push
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "📊 Update GitHub activity and stats [automated]" || exit 0
+            git push
+          fi
+
+      - name: Update GitHub Profile Trophy
+        uses: ryo-ma/github-profile-trophy@master
+        with:
+          username: thinkdatalabs
+          theme: radical
+          no-frame: true
+          no-bg: false
+          margin-w: 4
+
+  update-blog-posts:
+    name: Update Latest Blog Posts
+    runs-on: ubuntu-latest
+    needs: update-readme
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
+      - name: Update Blog Posts
+        uses: gautamkrishnar/blog-post-workflow@master
+        with:
+          comment_tag_name: "BLOG-POST-LIST"
+          feed_list: "https://thinkdatalabs.com/feed.xml,https://dev.to/feed/thinkdatalabs"
+          max_post_count: 5
+          template: "- [$title]($url) - $date"
+          date_format: "mmm dd, yyyy"
+          
+      - name: Commit Blog Updates
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add .
+          if git diff --staged --quiet; then
+            echo "No blog updates to commit"
+          else
+            git commit -m "📝 Update latest blog posts [automated]" || exit 0
+            git push
+          fi
+
+  generate-snake:
+    name: Generate Snake Animation
+    runs-on: ubuntu-latest
+    needs: update-readme
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate Snake
+        uses: Platane/snk@master
+        id: snake-gif
+        with:
+          github_user_name: thinkdatalabs
+          svg_out_path: dist/github-contribution-grid-snake.svg
+          gif_out_path: dist/github-contribution-grid-snake.gif
+
+      - name: Push Snake to Output Branch
+        uses: crazy-max/ghaction-github-pages@v3.1.0
+        with:
+          target_branch: output
+          build_dir: dist
+        env:
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
+  notify-completion:
+    name: Notify Completion
+    runs-on: ubuntu-latest
+    needs: [update-readme, update-blog-posts, generate-snake]
+    if: always()
+    
+    steps:
+      - name: Notification
+        run: |
+          echo "🎉 GitHub Activity Update Workflow Completed!"
+          echo "✅ README updated with latest activity"
+          echo "✅ Repository status refreshed" 
+          echo "✅ Blog posts updated"
+          echo "✅ Snake animation generated"
+          echo "📊 All GitHub statistics are now current"

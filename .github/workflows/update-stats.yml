@@ -27,6 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       should-run: ${{ steps.check.outputs.should-run }}
+      has-wakatime: ${{ steps.check.outputs.has-wakatime }}
     
     steps:
       - name: Validate Secrets
@@ -40,6 +41,10 @@ jobs:
           
           if [ -z "${{ secrets.WAKATIME_API_KEY }}" ]; then
             echo "⚠️ WAKATIME_API_KEY not set - WakaTime stats will be skipped"
+            echo "has-wakatime=false" >> $GITHUB_OUTPUT
+          else
+            echo "✅ WAKATIME_API_KEY found"
+            echo "has-wakatime=true" >> $GITHUB_OUTPUT
           fi
           
           echo "✅ Required secrets validated"
@@ -596,7 +601,7 @@ jobs:
     name: 📊 Update WakaTime Stats
     runs-on: ubuntu-latest
     needs: [validate-setup, update-core-activity]
-    if: needs.validate-setup.outputs.should-run == 'true' && secrets.WAKATIME_API_KEY != ''
+    if: needs.validate-setup.outputs.should-run == 'true' && needs.validate-setup.outputs.has-wakatime == 'true'
     continue-on-error: true # Don't fail the entire workflow if WakaTime fails
     
     steps:

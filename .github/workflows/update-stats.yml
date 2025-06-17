@@ -1,13 +1,13 @@
-name: 🚀 Think Data Labs - GitHub Activity & Repository Metrics Update
+name: 🚀 Think Data Labs - GitHub Stats & Activity
 
 on:
   schedule:
-    - cron: '0 */6 * * *'    # Update every 6 hours for real-time activity
-    - cron: '0 2 * * 1'      # Weekly comprehensive update on Mondays at 2 AM
-  workflow_dispatch:         # Allow manual trigger
+    - cron: '0 */6 * * *'
+    - cron: '0 2 * * 1'
+  workflow_dispatch:
     inputs:
       update_type:
-        description: 'Type of update to perform'
+        description: 'Type of update'
         required: false
         default: 'full'
         type: choice
@@ -27,6 +27,7 @@ on:
     paths:
       - 'README.md'
       - '.github/workflows/**'
+  issues: {}
 
 env:
   GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
@@ -37,273 +38,133 @@ env:
   TIMEZONE: "Asia/Kolkata"
 
 jobs:
-  # Environment setup and validation
-  setup-environment:
+
+  setup:
     runs-on: ubuntu-latest
-    name: 🔧 Environment Setup & Validation
     outputs:
-      should_update_activity: ${{ steps.scope.outputs.activity }}
-      should_update_repositories: ${{ steps.scope.outputs.repositories }}
-      timestamp: ${{ steps.time.outputs.timestamp }}
-      date_formatted: ${{ steps.time.outputs.date_formatted }}
-    
+      update_type: ${{ steps.vars.outputs.update_type }}
+      force_rebuild: ${{ steps.vars.outputs.force_rebuild }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          token: ${{ env.GITHUB_TOKEN }}
-          fetch-depth: 0
-
-      - name: Generate timestamps
-        id: time
+      - name: Set variables
+        id: vars
         run: |
-          echo "timestamp=$(date +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_OUTPUT
-          echo "date_formatted=$(date +'%B %d, %Y')" >> $GITHUB_OUTPUT
+          echo "update_type=${{ github.event.inputs.update_type || 'full' }}" >> $GITHUB_OUTPUT
+          echo "force_rebuild=${{ github.event.inputs.force_rebuild || 'false' }}" >> $GITHUB_OUTPUT
 
-      - name: Determine update scope
-        id: scope
+      - name: Validate tokens
         run: |
-          UPDATE_TYPE="${{ github.event.inputs.update_type || 'full' }}"
-          FORCE_REBUILD="${{ github.event.inputs.force_rebuild || 'false' }}"
-          
-          echo "🎯 Update Configuration:"
-          echo "- Type: $UPDATE_TYPE"
-          echo "- Force Rebuild: $FORCE_REBUILD"
-          
-          case $UPDATE_TYPE in
-            "full")
-              echo "activity=true" >> $GITHUB_OUTPUT
-              echo "repositories=true" >> $GITHUB_OUTPUT
-              ;;
-            "activity-only")
-              echo "activity=true" >> $GITHUB_OUTPUT
-              echo "repositories=false" >> $GITHUB_OUTPUT
-              ;;
-            "repositories-only")
-              echo "activity=false" >> $GITHUB_OUTPUT
-              echo "repositories=true" >> $GITHUB_OUTPUT
-              ;;
-          esac
-
-      - name: Validate environment and tokens
-        run: |
-          echo "🔍 Environment Validation:"
-          
           if [ -z "${{ env.GITHUB_TOKEN }}" ]; then
-            echo "❌ PERSONAL_ACCESS_TOKEN is not configured"
+            echo "❌ PERSONAL_ACCESS_TOKEN is not set"
             exit 1
           fi
-          echo "✅ GitHub Token: Configured"
-          
-          curl -s -H "Authorization: token ${{ env.GITHUB_TOKEN }}" \
-               "https://api.github.com/user" > /dev/null
-          
-          if [ $? -eq 0 ]; then
-            echo "✅ GitHub API Access: Verified"
-          else
-            echo "❌ GitHub API Access: Failed"
-            exit 1
-          fi
-          
-          echo "🎉 Environment validation completed successfully"
 
-  # Update repository statistics and metadata
-  update-repository-data:
+  update-repository-table:
     runs-on: ubuntu-latest
-    name: 📊 Update Repository Statistics
-    needs: setup-environment
-    if: needs.setup-environment.outputs.should_update_repositories == 'true'
-    
+    needs: setup
+    if: needs.setup.outputs.update_type == 'full' || needs.setup.outputs.update_type == 'repositories-only'
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           token: ${{ env.GITHUB_TOKEN }}
-          fetch-depth: 0
 
-      - name: Setup Node.js environment
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
 
-      - name: Install required dependencies
+      - name: Install dependencies
+        run: npm install @octokit/rest chalk axios
+
+      - name: Update repository status table in README
         run: |
-          npm install @octokit/rest chalk axios
-          
-      - name: Update repository statistics table
-        run: |
-          echo "📊 Updating Think Data Labs repository statistics..."
-          
-          cat > update_repositories.js << 'EOF'
+          node <<'EOF'
           const { Octokit } = require('@octokit/rest');
           const fs = require('fs');
           const chalk = require('chalk');
-          
-          const octokit = new Octokit({
-            auth: process.env.GITHUB_TOKEN
-          });
-          
-          async function updateRepositoryData() {
-            try {
-              console.log(chalk.blue('🔍 Fetching Think Data Labs repositories...'));
-              
-              const { data: repos } = await octokit.rest.repos.listForOrg({
-                org: 'thinkdatalabs',
-                sort: 'updated',
-                per_page: 100
-              });
-              
-              console.log(chalk.green(`📦 Found ${repos.length} repositories`));
-              
-              // Repository list from README.md
-              const featuredRepositories = [
-                'python-data-analytics',
-                'ml-model-deployment',
-                'react-component-library',
-                'nextjs-applications'
-              ];
-              
-              let repositoryTableRows = '';
-              let foundRepos = 0;
-              
-              for (const repoName of featuredRepositories) {
-                const repo = repos.find(r => r.name === repoName);
-                if (repo) {
-                  foundRepos++;
-                  const language = repo.language || 'Multiple';
-                  const languageBadge = getLanguageBadge(language);
-                  const status = repo.archived ? 'Archived' : 'Active';
-                  const statusColor = status === 'Active' ? 'brightgreen' : 'red';
-                  const statusBadge = `![${status}](https://img.shields.io/badge/Status-${status}-${statusColor})`;
-                  
-                  repositoryTableRows += `| ${repoName} | ${statusBadge} | ${languageBadge} | ![Stars](https://img.shields.io/github/stars/thinkdatalabs/${repoName}) | ![Forks](https://img.shields.io/github/forks/thinkdatalabs/${repoName}) | ![Issues](https://img.shields.io/github/issues/thinkdatalabs/${repoName}) | ![Last Commit](https://img.shields.io/github/last-commit/thinkdatalabs/${repoName}) |\n`;
-                } else {
-                  repositoryTableRows += `| ${repoName} | ![Planned](https://img.shields.io/badge/Status-Planned-yellow) | ![TBD](https://img.shields.io/badge/Language-TBD-lightgrey) | - | - | - | - |\n`;
-                }
-              }
-              
-              console.log(chalk.blue(`📋 Generated table for ${foundRepos} active repositories`));
-              
-              let readme = fs.readFileSync('README.md', 'utf8');
-              
-              const tableHeader = '| Repository | Status | Language | Stars | Forks | Issues | Last Commit |';
-              const tableSeparator = '|------------|--------|----------|-------|-------|--------|-------------|';
-              const fullTable = tableHeader + '\n' + tableSeparator + '\n' + repositoryTableRows;
-              
-              const tableRegex = /\| Repository \| Status \| Language[\s\S]*?(?=\n\n|\n---|\n##|\n###|$)/;
-              if (tableRegex.test(readme)) {
-                readme = readme.replace(tableRegex, fullTable);
-                console.log(chalk.green('✅ Repository status table updated'));
-              } else {
-                console.log(chalk.yellow('⚠️ Repository table section not found'));
-                readme = readme.replace(/(## 📊 GitHub Activity[\s\S]*?)(?=\n##|\n$)/, `$1\n### 📋 Repository Status Dashboard\n\n${fullTable}\n`);
-              }
-              
-              fs.writeFileSync('README.md', readme);
-              console.log(chalk.green('🎉 Repository data updated successfully!'));
-              
-            } catch (error) {
-              console.error(chalk.red('❌ Error updating repository data:'), error.message);
-              process.exit(1);
-            }
-          }
-          
-          function getLanguageBadge(language) {
-            const languageBadges = {
-              'Python': '![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)',
-              'JavaScript': '![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?style=flat&logo=javascript&logoColor=black)',
-              'TypeScript': '![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=flat&logo=typescript&logoColor=white)',
-              'React': '![React](https://img.shields.io/badge/React-20232A?style=flat&logo=react&logoColor=61DAFB)',
-              'Next.js': '![Next.js](https://img.shields.io/badge/Next.js-000000?style=flat&logo=next.js&logoColor=white)',
-              'Multiple': '![Multiple](https://img.shields.io/badge/Multiple-Languages-rainbow?style=flat)'
-            };
-            
-            return languageBadges[language] || `![${language}](https://img.shields.io/badge/${encodeURIComponent(language)}-gray?style=flat)`;
-          }
-          
-          updateRepositoryData();
-          EOF
-          
-          node update_repositories.js
 
-      - name: Commit repository updates
+          const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+          const org = 'thinkdatalabs';
+          const featuredRepos = [
+            'python-data-analytics',
+            'ml-model-deployment',
+            'react-component-library',
+            'nextjs-applications'
+          ];
+
+          async function run() {
+            const { data: repos } = await octokit.rest.repos.listForOrg({ org, per_page: 100 });
+            let table = '| Repository | Status | Language | Stars | Forks | Issues | Last Commit |\n';
+            table += '|------------|--------|----------|-------|-------|--------|-------------|\n';
+            for (const repoName of featuredRepos) {
+              const repo = repos.find(r => r.name === repoName);
+              if (repo) {
+                const language = repo.language || 'Multiple';
+                const status = repo.archived ? 'Archived' : 'Active';
+                const statusColor = repo.archived ? 'red' : 'brightgreen';
+                const lastCommit = repo.pushed_at ? repo.pushed_at.split('T')[0] : '-';
+                table += | ${repoName} | ![${status}](https://img.shields.io/badge/Status-${status}-${statusColor}) | ![${language}](https://img.shields.io/badge/${encodeURIComponent(language)}-blue?style=flat) | ![Stars](https://img.shields.io/github/stars/thinkdatalabs/${repoName}) | ![Forks](https://img.shields.io/github/forks/thinkdatalabs/${repoName}) | ![Issues](https://img.shields.io/github/issues/thinkdatalabs/${repoName}) | ${lastCommit} |\n;
+              } else {
+                table += | ${repoName} | ![Planned](https://img.shields.io/badge/Status-Planned-yellow) | ![TBD](https://img.shields.io/badge/Language-TBD-lightgrey) | - | - | - | - |\n;
+              }
+            }
+
+            let readme = fs.readFileSync('README.md', 'utf8');
+            const regex = /\| Repository \| Status \| Language[\s\S]*?(?=\n\n|\n---|\n##|\n###|$)/;
+            if (regex.test(readme)) {
+              readme = readme.replace(regex, table);
+            } else {
+              readme += \n\n${table}\n;
+            }
+            fs.writeFileSync('README.md', readme);
+          }
+
+          run().catch(e => { console.error(e); process.exit(1) });
+          EOF
+
+      - name: Commit changes
         run: |
           git config --global user.name "${{ env.BOT_NAME }}"
           git config --global user.email "${{ env.BOT_EMAIL }}"
-          
-          if git diff --quiet; then
-            echo "📝 No repository changes to commit"
-          else
-            git add README.md
-            git commit -m "📊 Update repository statistics table
+          git add README.md
+          git diff --cached --quiet || git commit -m "📊 Update repository status table"
+          git push
 
-            - Updated repository status and metadata
-            - Refreshed badge information
-            - Synchronized activity data
-            
-            🤖 Auto-generated by Think Data Labs Bot"
-            git push
-            echo "✅ Repository updates committed and pushed"
-          fi
-
-  # Update GitHub activity and recent contributions
-  update-github-activity:
+  update-activity:
     runs-on: ubuntu-latest
-    name: 🔄 Update GitHub Activity Feed
-    needs: setup-environment
-    if: needs.setup-environment.outputs.should_update_activity == 'true'
-    
+    needs: setup
+    if: needs.setup.outputs.update_type == 'full' || needs.setup.outputs.update_type == 'activity-only'
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           token: ${{ env.GITHUB_TOKEN }}
-          fetch-depth: 0
 
       - name: Update recent GitHub activity
         uses: jamesgeorge007/github-activity-readme@master
         env:
           GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
         with:
-          COMMIT_MSG: '🔄 Update recent GitHub activity feed
-            
-            - Refreshed real-time activity section
-            - Updated contribution timeline
-            - Synchronized activity badges
-            
-            🤖 Auto-generated by Think Data Labs Bot'
+          COMMIT_MSG: '🔄 Update recent GitHub activity feed'
           MAX_LINES: 12
           COMMIT_NAME: ${{ env.BOT_NAME }}
           COMMIT_EMAIL: ${{ env.BOT_EMAIL }}
 
-  # Update WakaTime development statistics
-  update-wakatime-stats:
+  update-wakatime:
     runs-on: ubuntu-latest
-    name: 📈 Update WakaTime Development Stats
-    needs: setup-environment
-    if: needs.setup-environment.outputs.should_update_activity == 'true'
-    
+    needs: setup
+    if: needs.setup.outputs.update_type == 'full' || needs.setup.outputs.update_type == 'activity-only'
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           token: ${{ env.GITHUB_TOKEN }}
-          fetch-depth: 0
 
-      - name: Update WakaTime Stats
+      - name: Update WakaTime stats
         uses: anmol098/waka-readme-stats@master
         with:
           WAKATIME_API_KEY: ${{ secrets.WAKATIME_API_KEY }}
           GH_TOKEN: ${{ env.GITHUB_TOKEN }}
           REPOSITORY_NAME: thinkdatalabs/thinkdatalabs
-          COMMIT_MESSAGE: '📈 Updated weekly development stats
-
-          - Updated coding time breakdown
-          - Refreshed language statistics
-          - Updated development activity patterns
-          
-          🤖 Auto-generated by Think Data Labs Bot'
+          COMMIT_MESSAGE: '📈 Updated weekly development stats'
           SHOW_PROJECTS: "False"
           SHOW_LINES_OF_CODE: "True"
           SHOW_LANGUAGE: "True"
@@ -314,100 +175,15 @@ jobs:
           SHOW_SHORT_INFO: "True"
           SHOW_LOC_CHART: "False"
           LOCALE: "en"
-          SHOW_PROFILE_VIEWS: "False"
-          SHOW_DAYS_OF_WEEK: "True"
 
-  # Validate README structure and badges
-  validate-readme:
-    runs-on: ubuntu-latest
-    name: 🛡️ Validate README & Badges
-    needs: setup-environment
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          token: ${{ env.GITHUB_TOKEN }}
-          fetch-depth: 0
-
-      - name: Validate README.md structure
-        run: |
-          echo "🔍 Validating Think Data Labs README.md structure..."
-          
-          REQUIRED_SECTIONS=(
-            "GitHub Activity"
-            "Repository Status Dashboard"
-            "Our Core Services"
-            "Featured Projects"
-          )
-          
-          MISSING_SECTIONS=()
-          
-          for section in "${REQUIRED_SECTIONS[@]}"; do
-            if grep -q "## .*$section" README.md || grep -q "# .*$section" README.md; then
-              echo "✅ Section found: $section"
-            else
-              echo "⚠️ Section missing or incorrectly formatted: $section"
-              MISSING_SECTIONS+=("$section")
-            fi
-          done
-          
-          if [ ${#MISSING_SECTIONS[@]} -gt 0 ]; then
-            echo ""
-            echo "📋 Missing sections summary:"
-            printf ' - %s\n' "${MISSING_SECTIONS[@]}"
-            exit 1
-          else
-            echo "🎉 All required sections are present!"
-          fi
-
-      - name: Validate badges and external URLs
-        run: |
-          echo "🏷️ Validating GitHub badges and external services..."
-          
-          BADGE_URLS=(
-            "https://github-readme-stats.vercel.app/api?username=thinkdatalabs"
-            "https://github-readme-streak-stats.herokuapp.com/?user=thinkdatalabs"
-            "https://github-readme-stats.vercel.app/api/top-langs/?username=thinkdatalabs"
-            "https://github-readme-activity-graph.vercel.app/graph?username=thinkdatalabs"
-            "https://github-profile-trophy.vercel.app/?username=thinkdatalabs"
-          )
-          
-          FAILED_BADGES=()
-          
-          for badge_url in "${BADGE_URLS[@]}"; do
-            echo "Testing: $badge_url"
-            if curl -s --head --max-time 10 "$badge_url" | head -n 1 | grep -q "200\|302"; then
-              echo "✅ Badge accessible: $badge_url"
-            else
-              echo "⚠️ Badge may have issues: $badge_url"
-              FAILED_BADGES+=("$badge_url")
-            fi
-          done
-          
-          if [ ${#FAILED_BADGES[@]} -gt 0 ]; then
-            echo ""
-            echo "⚠️ Some badges may need attention:"
-            printf ' - %s\n' "${FAILED_BADGES[@]}"
-          else
-            echo "🎉 All badges are accessible!"
-          fi
-
-  # Generate comprehensive GitHub metrics
   generate-metrics:
     runs-on: ubuntu-latest
-    name: 📊 Generate GitHub Metrics
-    needs: setup-environment
-    if: needs.setup-environment.outputs.should_update_activity == 'true'
-    permissions:
-      contents: write
-      
+    needs: [update-repository-table, update-activity, update-wakatime]
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           token: ${{ env.GITHUB_TOKEN }}
-          
+
       - name: Generate GitHub Metrics
         uses: lowlighter/metrics@latest
         with:
@@ -415,7 +191,7 @@ jobs:
           user: thinkdatalabs
           template: classic
           base: header, activity, community, repositories, metadata
-          config_timezone: ${{ env.TIMEZONE }}
+          config_timezone: Asia/Kolkata
           plugin_isocalendar: yes
           plugin_isocalendar_duration: full-year
           plugin_languages: yes
@@ -446,330 +222,10 @@ jobs:
           plugin_code_load: 400
           plugin_code_visibility: public
 
-  # Finalize updates and commit
-  finalize-profile-update:
-    runs-on: ubuntu-latest
-    name: 🚀 Finalize Profile Updates
-    needs: [
-      setup-environment,
-      update-repository-data,
-      update-github-activity,
-      update-wakatime-stats,
-      validate-readme,
-      generate-metrics
-    ]
-    if: always() && !cancelled()
-    
-    steps:
-      - name: Checkout repository with latest changes
-        uses: actions/checkout@v4
-        with:
-          token: ${{ env.GITHUB_TOKEN }}
-          fetch-depth: 0
-
-      - name: Configure Git for Think Data Labs Bot
+      - name: Commit metrics
         run: |
           git config --global user.name "${{ env.BOT_NAME }}"
           git config --global user.email "${{ env.BOT_EMAIL }}"
-
-      - name: Pull and merge any remote changes
-        run: |
-          git pull origin main --rebase --autostash
-
-      - name: Add profile update timestamp
-        run: |
-          echo "⏰ Adding Think Data Labs profile update timestamp..."
-          
-          TIMESTAMP="${{ needs.setup-environment.outputs.timestamp }}"
-          DATE_FORMATTED="${{ needs.setup-environment.outputs.date_formatted }}"
-          
-          if grep -q "Last Updated:" README.md; then
-            sed -i "s/Last Updated:.*/Last Updated: $DATE_FORMATTED/" README.md
-            echo "✅ Updated existing timestamp"
-          else
-            echo -e "\n---\n\n> **🔄 Last Updated:** $DATE_FORMATTED | **🤖 Automated by:** Think Data Labs Bot" >> README.md
-            echo "✅ Added new timestamp section"
-          fi
-
-      - name: Generate update summary
-        run: |
-          echo "📊 Think Data Labs Profile Update Summary" > UPDATE_SUMMARY.md
-          echo "============================================" >> UPDATE_SUMMARY.md
-          echo "" >> UPDATE_SUMMARY.md
-          echo "🕒 **Update Time:** ${{ needs.setup-environment.outputs.timestamp }}" >> UPDATE_SUMMARY.md
-          echo "🏢 **Organization:** ${{ env.COMPANY_NAME }}" >> UPDATE_SUMMARY.md
-          echo "" >> UPDATE_SUMMARY.md
-          echo "### 📋 Component Update Status:" >> UPDATE_SUMMARY.md
-          echo "- **Environment Setup:** ${{ needs.setup-environment.result }}" >> UPDATE_SUMMARY.md
-          echo "- **Repository Data:** ${{ needs.update-repository-data.result }}" >> UPDATE_SUMMARY.md
-          echo "- **GitHub Activity:** ${{ needs.update-github-activity.result }}" >> UPDATE_SUMMARY.md
-          echo "- **WakaTime Stats:** ${{ needs.update-wakatime-stats.result }}" >> UPDATE_SUMMARY.md
-          echo "- **README Validation:** ${{ needs.validate-readme.result }}" >> UPDATE_SUMMARY.md
-          echo "- **Metrics Generation:** ${{ needs.generate-metrics.result }}" >> UPDATE_SUMMARY.md
-          echo "" >> UPDATE_SUMMARY.md
-          
-          SUCCESS_COUNT=0
-          TOTAL_COUNT=6
-          
-          [[ "${{ needs.setup-environment.result }}" == "success" ]] && ((SUCCESS_COUNT++))
-          [[ "${{ needs.update-repository-data.result }}" == "success" ]] && ((SUCCESS_COUNT++))
-          [[ "${{ needs.update-github-activity.result }}" == "success" ]] && ((SUCCESS_COUNT++))
-          [[ "${{ needs.update-wakatime-stats.result }}" == "success" ]] && ((SUCCESS_COUNT++))
-          [[ "${{ needs.validate-readme.result }}" == "success" ]] && ((SUCCESS_COUNT++))
-          [[ "${{ needs.generate-metrics.result }}" == "success" ]] && ((SUCCESS_COUNT++))
-          
-          if [[ $SUCCESS_COUNT -eq $TOTAL_COUNT ]]; then
-            echo "🎉 **Overall Status:** COMPLETE SUCCESS ($SUCCESS_COUNT/$TOTAL_COUNT)" >> UPDATE_SUMMARY.md
-            echo "✅ Think Data Labs GitHub profile successfully updated!" >> UPDATE_SUMMARY.md
-          elif [[ $SUCCESS_COUNT -gt 3 ]]; then
-            echo "✅ **Overall Status:** PARTIAL SUCCESS ($SUCCESS_COUNT/$TOTAL_COUNT)" >> UPDATE_SUMMARY.md
-            echo "Most components updated successfully." >> UPDATE_SUMMARY.md
-          else
-            echo "⚠️ **Overall Status:** NEEDS ATTENTION ($SUCCESS_COUNT/$TOTAL_COUNT)" >> UPDATE_SUMMARY.md
-            echo "Several components require manual review." >> UPDATE_SUMMARY.md
-          fi
-          
-          echo "" >> UPDATE_SUMMARY.md
-          echo "🔗 **Profile URL:** https://github.com/thinkdatalabs" >> UPDATE_SUMMARY.md
-
-      - name: Commit all finalized changes
-        run: |
-          git add -A
-          
-          if git diff --staged --quiet; then
-            echo "📝 No changes detected for final commit"
-          else
-            echo "📝 Committing comprehensive profile updates..."
-            
-            COMMIT_MESSAGE="🚀 Think Data Labs: Profile Update (${{ needs.setup-environment.outputs.date_formatted }})
-
-            📊 **Updated Components:**
-            $([ "${{ needs.setup-environment.outputs.should_update_repositories }}" == "true" ] && echo "✅ Repository statistics table with current status")
-            $([ "${{ needs.setup-environment.outputs.should_update_activity }}" == "true" ] && echo "✅ GitHub activity feed and contribution metrics")
-            $([ "${{ needs.setup-environment.outputs.should_update_activity }}" == "true" ] && echo "✅ WakaTime development statistics")
-            ✅ README structure validation and badge verification
-            ✅ Comprehensive GitHub metrics generation
-            ✅ Profile timestamp and update summary
-            
-            🔍 **Quality Assurance:**
-            - All badges tested for accessibility
-            - README structure validated
-            - Repository data synchronized
-            - Activity feeds refreshed
-            
-            🤖 Auto-generated by Think Data Labs Bot"
-            
-            git commit -m "$COMMIT_MESSAGE"
-            git push
-            echo "✅ Final changes pushed successfully"
-          fi
-
-    - name: Update WakaTime Stats
-      uses: anmol098/waka-readme-stats@master
-      with:
-        WAKATIME_API_KEY: ${{ secrets.WAKATIME_API_KEY }}
-        GH_TOKEN: ${{ secrets.GH_TOKEN }}
-        REPOSITORY_NAME: thinkdatalabs/thinkdatalabs
-        COMMIT_MESSAGE: '📈 Updated weekly development stats'
-        SHOW_PROJECTS: "False"
-        SHOW_LINES_OF_CODE: "True"
-        SHOW_LANGUAGE: "True"
-        SHOW_OS: "True"
-        SHOW_TIMEZONE: "True"
-        SHOW_EDITORS: "True"
-        SHOW_LANGUAGE_PER_REPO: "True"
-        SHOW_SHORT_INFO: "True"
-        SHOW_LOC_CHART: "False"
-        LOCALE: "en"
-
-  update-stats:
-    runs-on: ubuntu-latest
-    needs: update-readme
-    permissions:
-      contents: write
-      
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        token: ${{ secrets.GH_TOKEN }}
-        
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '18'
-        
-    - name: Install dependencies
-      run: |
-        npm install octokit
-        npm install @octokit/rest
-        
-    - name: Update Repository Stats
-      uses: actions/github-script@v7
-      with:
-        github-token: ${{ secrets.GH_TOKEN }}
-        script: |
-          const fs = require('fs');
-          
-          // List of repositories to track
-          const repos = [
-            'python-data-analytics',
-            'ml-model-deployment', 
-            'react-component-library',
-            'nextjs-applications',
-            'python-api-services',
-            'data-processing-pipelines',
-            'python-algorithms',
-            'scientific-computing',
-            'ml-algorithms-library',
-            'ai-model-training',
-            'computer-vision-tools',
-            'nlp-text-analysis',
-            'deep-learning-frameworks',
-            'reinforcement-learning',
-            'node-microservices',
-            'typescript-utilities',
-            'express-api-frameworks',
-            'vue-applications',
-            'interactive-dashboards',
-            'real-time-analytics',
-            'chart-components',
-            'data-export-tools',
-            'd3-visualizations',
-            'plotly-dashboards',
-            'aws-deployment-tools',
-            'docker-containers',
-            'kubernetes-configs',
-            'terraform-modules',
-            'ci-cd-pipelines',
-            'monitoring-solutions',
-            'react-native-apps',
-            'electron-desktop-apps',
-            'flutter-mobile-apps',
-            'native-mobile-libs',
-            'pwa-applications',
-            'cross-platform-tools'
-          ];
-          
-          let readmeContent = fs.readFileSync('README.md', 'utf8');
-          
-          // Update repository status table
-          let tableContent = '';
-          for (const repo of repos.slice(0, 4)) { // Update first 4 repos as shown in example
-            try {
-              const { data } = await github.rest.repos.get({
-                owner: 'thinkdatalabs',
-                repo: repo
-              });
-              
-              // Get latest commit
-              const commits = await github.rest.repos.listCommits({
-                owner: 'thinkdatalabs',
-                repo: repo,
-                per_page: 1
-              });
-              
-              const lastCommit = commits.data[0] ? commits.data[0].commit.committer.date : 'N/A';
-              const language = data.language || 'Unknown';
-              const stars = data.stargazers_count;
-              const forks = data.forks_count;
-              const openIssues = data.open_issues_count;
-              
-              // Determine language badge
-              let langBadge = '';
-              switch(language) {
-                case 'Python':
-                  langBadge = '![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)';
-                  break;
-                case 'JavaScript':
-                case 'TypeScript':
-                  langBadge = '![React](https://img.shields.io/badge/React-20232A?style=flat&logo=react&logoColor=61DAFB)';
-                  break;
-                default:
-                  langBadge = `![${language}](https://img.shields.io/badge/${language}-blue?style=flat)`;
-              }
-              
-              tableContent += `| ${repo} | ![Active](https://img.shields.io/badge/Status-Active-brightgreen) | ${langBadge} | ![Stars](https://img.shields.io/github/stars/thinkdatalabs/${repo}) | ![Forks](https://img.shields.io/github/forks/thinkdatalabs/${repo}) | ![Issues](https://img.shields.io/github/issues/thinkdatalabs/${repo}) | ![Last Commit](https://img.shields.io/github/last-commit/thinkdatalabs/${repo}) |\n`;
-              
-            } catch (error) {
-              console.log(`Repository ${repo} not found or is private`);
-              // Add placeholder for private repos
-              tableContent += `| ${repo} | ![Private](https://img.shields.io/badge/Status-Private-orange) | ![Unknown](https://img.shields.io/badge/Language-Unknown-lightgrey) | ![Private](https://img.shields.io/badge/Stars-Private-lightgrey) | ![Private](https://img.shields.io/badge/Forks-Private-lightgrey) | ![Private](https://img.shields.io/badge/Issues-Private-lightgrey) | ![Private](https://img.shields.io/badge/Last%20Commit-Private-lightgrey) |\n`;
-            }
-          }
-          
-          // Replace the repository table in README
-          const tableStart = '| Repository | Status | Language | Stars | Forks | Issues | Last Commit |';
-          const tableHeader = '|------------|--------|----------|--------|-------|--------|-------------|';
-          const tableRegex = /\| Repository \| Status \| Language \| Stars \| Forks \| Issues \| Last Commit \|\s*\n\|[^\n]+\|\s*\n([\s\S]*?)(?=\n\n|\n---|\n###|$)/;
-          
-          const newTable = `${tableStart}\n${tableHeader}\n${tableContent}`;
-          readmeContent = readmeContent.replace(tableRegex, newTable);
-          
-          fs.writeFileSync('README.md', readmeContent);
-          
-    - name: Commit changes
-      run: |
-        git config --local user.email "dev@thinkdatalabs.com"
-        git config --local user.name "Think Data Labs Bot"
-        git add README.md
-        git diff --staged --quiet || git commit -m "📊 Updated repository statistics and activity"
-        git push
-
-  generate-metrics:
-    runs-on: ubuntu-latest
-    needs: [update-readme, update-stats]
-    permissions:
-      contents: write
-      
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        token: ${{ secrets.GH_TOKEN }}
-        
-    - name: Generate GitHub Metrics
-      uses: lowlighter/metrics@latest
-      with:
-        token: ${{ secrets.METRICS_TOKEN }}
-        user: thinkdatalabs
-        template: classic
-        base: header, activity, community, repositories, metadata
-        config_timezone: Asia/Kolkata
-        plugin_isocalendar: yes
-        plugin_isocalendar_duration: full-year
-        plugin_languages: yes
-        plugin_languages_analysis_timeout: 15
-        plugin_languages_categories: markup, programming
-        plugin_languages_colors: github
-        plugin_languages_limit: 8
-        plugin_languages_recent_categories: markup, programming
-        plugin_languages_recent_days: 14
-        plugin_languages_recent_load: 300
-        plugin_languages_sections: most-used
-        plugin_languages_threshold: 0%
-        plugin_lines: yes
-        plugin_repositories: yes
-        plugin_repositories_batch: 100
-        plugin_activity: yes
-        plugin_activity_days: 14
-        plugin_activity_filter: all
-        plugin_activity_limit: 5
-        plugin_activity_load: 300
-        plugin_activity_visibility: all
-        plugin_followup: yes
-        plugin_followup_sections: repositories
-        plugin_projects: yes
-        plugin_projects_limit: 4
-        plugin_code: yes
-        plugin_code_lines: 12
-        plugin_code_load: 400
-        plugin_code_visibility: public
-        
-    - name: Commit metrics
-      run: |
-        git config --local user.email "dev@thinkdatalabs.com"
-        git config --local user.name "Think Data Labs Bot"
-        git add .
-        git diff --staged --quiet || git commit -m "📈 Updated GitHub metrics and insights"
-        git push
+          git add .
+          git diff --cached --quiet || git commit -m "📈 Updated GitHub metrics and insights"
+          git push
